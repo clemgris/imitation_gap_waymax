@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  dev:
+    build:
+      context: .
+      args:
+        UID: $UID
+    ports:
+      - "127.0.0.1:8888-8895:8888-8895"
+    volumes:
+      - /data/sun/risrio:/data/sun/risrio
+    entrypoint: /bin/bash
+    image: dil:latest
+    runtime: nvidia
+    shm_size: "64gb"
