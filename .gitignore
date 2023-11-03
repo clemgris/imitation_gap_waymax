@@ -9,6 +9,6 @@ target/
 .ipynb_checkpoints
 
 # Byte-compiled / optimized / DLL files
-__pycache__/
+/model/__pycache__/
 *.py[cod]
 *$py.class
