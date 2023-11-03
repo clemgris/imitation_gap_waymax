@@ -1,2 +1,14 @@
 # Debug files
-/notebooks/work_in_progress.ipynb
+notebooks/work_in_progress.ipynb
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
