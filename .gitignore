@@ -1,5 +1,6 @@
 # Debug files
 notebooks/work_in_progress.ipynb
+debug.py
 
 # PyBuilder
 .pybuilder/
@@ -10,5 +11,10 @@ target/
 
 # Byte-compiled / optimized / DLL files
 /model/__pycache__/
+/dataset/__pycache__
 *.py[cod]
 *$py.class
+
+# Logs
+model/logs
+logs
