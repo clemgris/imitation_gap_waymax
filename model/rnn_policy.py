@@ -22,7 +22,6 @@ class ScannedRNN(nn.Module):
     def __call__(self, carry, x):
         rnn_state = carry
         ins, resets = x
-        breakpoint
         rnn_state = jnp.where(
             resets[:, np.newaxis],
             self.initialize_carry((ins.shape[0], ins.shape[1])),
@@ -69,26 +68,3 @@ class ActorCriticRNN(nn.Module):
 
         # return new_rnn_state, pi, jnp.squeeze(critic, axis=-1) # DISCRETE ACTION SPACE
         return new_rnn_state, actor_mean, jnp.squeeze(critic, axis=-1) # CONTINUOUS ACTION SPACE
-    
-if __name__ == "__main__":
-    config = {
-        "LR": 2.5e-4,
-        "NUM_ENVS": 4,
-        "NUM_STEPS": 128,
-        "TOTAL_TIMESTEPS": 5e5,
-        "UPDATE_EPOCHS": 4,
-        "NUM_MINIBATCHES": 4,
-        "GAMMA": 0.99,
-        "GAE_LAMBDA": 0.95,
-        "CLIP_EPS": 0.2,
-        "ENT_COEF": 0.01,
-        "VF_COEF": 0.5,
-        "MAX_GRAD_NORM": 0.5,
-        "ENV_NAME": "CartPole-v1",
-        "ANNEAL_LR": True,
-        "DEBUG": True,
-    }
-
-    rng = jax.random.PRNGKey(30)
-    train_jit = jax.jit(make_train(config))
-    out = train_jit(rng)
