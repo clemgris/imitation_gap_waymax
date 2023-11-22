@@ -1,9 +1,7 @@
-import json
-import os 
-import pickle
-import numpy as np
 from datetime import datetime
 import jax
+import json
+import os 
 
 from waymax import config as _config
 
@@ -18,7 +16,11 @@ config = {
     'anneal_lr': False,
     'bins': 128,
     'discrete': False,
-    'freq_save': 1,
+    'extractor': 'ExtractXYGoal', #ExtractXY
+    'feature_extractor': 'FlattenKeyExtractor', #FlattenXYExtractor
+    'feature_extractor_kwargs': {'keys': ['xy', 'proxy_goal'],
+                                 'hidden_layers': 128}, # {}
+    'freq_save': 10,
     'key': 42,
     'lr': 3e-4,
     "max_grad_norm": 0.5,
@@ -49,7 +51,7 @@ config['log_folder'] = log_folder
 training_args = config
 
 with open(os.path.join(log_folder, 'args.json'), 'w') as json_file:
-    json.dump(training_args, json_file)
+    json.dump(training_args, json_file, indent=4)
 
 # Data iter config
 WOD_1_1_0_TRAINING = _config.DatasetConfig(
@@ -88,5 +90,5 @@ training = make_train(config,
                       WOD_1_1_0_TRAINING,
                       WOD_1_1_0_VALIDATION)
 
-# with jax.disable_jit(): # DEBUG
-training_dict = training.train()
+with jax.disable_jit(): # DEBUG
+    training_dict = training.train()
