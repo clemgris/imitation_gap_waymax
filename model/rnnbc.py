@@ -7,8 +7,8 @@ import os
 import optax
 import pickle
 from tqdm import tqdm
-from typing import NamedTuple
 
+from typing import NamedTuple
 from waymax import dynamics
 from waymax import dataloader
 from waymax import datatypes
@@ -19,13 +19,23 @@ import sys
 sys.path.append('./')
 
 from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
-from feature_extractor import XYExtractor
+from feature_extractor import FlattenKeyExtractor
+from state_preprocessing import ExtractXY, ExtractXYGoal
 from rnn_policy import ActorCriticRNN, ScannedRNN
+
 
 class Transition(NamedTuple):
     done: jnp.ndarray
     expert_action: jnp.array
     obs: jnp.ndarray
+
+extractors = {
+    'ExtractXY': ExtractXY,
+    'ExtractXYGoal': ExtractXYGoal,
+}
+feature_extractors = {
+    'FlattenKeyExtractor': FlattenKeyExtractor
+}
 
 
 class make_train:
@@ -58,7 +68,7 @@ class make_train:
         if config['discrete']:
             action_space_dim = self.dynamics_model.action_spec().shape
             self.dynamics_model = dynamics.discretizer.DiscreteActionSpaceWrapper(dynamics_model=self.dynamics_model,
-                                                                            bins=config['bins'] * jnp.array(action_space_dim))
+                                                                                  bins=config['bins'] * jnp.array(action_space_dim))
         else:
             self.dynamics_model = self.dynamics_model
 
@@ -72,32 +82,29 @@ class make_train:
         # DEFINE EXPERT AGENT
         self.expert_agent = agents.create_expert_actor(self.dynamics_model)
 
+        # DEFINE EXTRACTOR AND FEATURE_EXTRACTOR
+        self.extractor = extractors[self.config['extractor']](self.config)
+        self.feature_extractor = feature_extractors[self.config['feature_extractor']]
+        self.feature_extractor_kwargs = self.config['feature_extractor_kwargs']
+
     # SCHEDULER
     def linear_schedule(self, count):
-        frac = (
-            1.0
-            - (count // (self.config["num_envs"] * self.config['n_train_per_epoch']))
-        )
+        frac = (1.0 - (count // (self.config["num_envs"] * self.config['n_train_per_epoch'])))
         return self.config["lr"] * frac
 
     def train(self,):
         
         # INIT NETWORK
         network = ActorCriticRNN(self.dynamics_model.action_spec().shape[0],
-                                 feature_extractor_class=XYExtractor,
-                                 feature_extractor_kwargs={'max_num_obj': self.config['max_num_obj']},
+                                 feature_extractor_class=self.feature_extractor ,
+                                 feature_extractor_kwargs=self.feature_extractor_kwargs,
                                  config=self.config)
         
-        feature_extractor_shape = self.config['max_num_obj'] * 2 # /!\ Dirty, should be extracted from the network
+        feature_extractor_shape = self.feature_extractor_kwargs['hidden_layers']
         
         rng, _rng = jax.random.split(random.PRNGKey(self.config['key']))
 
-        init_x = (
-            jnp.zeros(
-                (1, self.config["num_envs"], self.config['max_num_obj'], 2)
-            ),
-            jnp.zeros((1, self.config["num_envs"]), dtype=bool),
-        )
+        init_x = self.extractor.init_x()
         init_rnn_state_train = ScannedRNN.initialize_carry((self.config["num_envs"], feature_extractor_shape))
         
         network_params = network.init(_rng, init_rnn_state_train, init_x)
@@ -124,10 +131,7 @@ class make_train:
         def _log_step(current_state, unused):
 
             done = current_state.is_done
-            full_obsv = datatypes.sdc_observation_from_state(current_state,
-                                                        roadgraph_top_k=self.config['roadgraph_top_k'])
-            obsv = full_obsv.trajectory.xy # /!\ TODO: need to remove the unvalid object
-
+            obsv = self.extractor(current_state)
             
             transition = Transition(done,
                                     None,
@@ -152,11 +156,8 @@ class make_train:
                 def _env_step(current_state, unused):
                     
                     done = jnp.tile(current_state.is_done, (self.config['num_envs'],))
+                    obsv = self.extractor(current_state)
 
-                    full_obsv = datatypes.sdc_observation_from_state(current_state,
-                                                                roadgraph_top_k=self.config['roadgraph_top_k'])
-                    
-                    obsv = full_obsv.trajectory.xy # /!\ TODO: need to remove the unvalid object
                     expert_action = self.expert_agent.select_action(state=current_state, params=None, rng=None, actor_state=None)
                     
                     # Add a mask here
@@ -216,15 +217,16 @@ class make_train:
                 return train_state, total_loss
                         
             metric = {'loss': []}
-
+            
+            losses = []
             jit_update_scenario = jax.jit(_update_scenario)
-
             for scenario in tqdm(self.data_iter_train, desc='Training', total=N_TRAINING // self.config['num_envs'] + 1):
                 if not jnp.any(scenario.object_metadata.is_sdc): # Scenario does not contain the SDC 
                     pass
                 else:
                     train_state, loss = jit_update_scenario(train_state, scenario)
-                    metric['loss'].append(loss)
+                    losses.append(loss)
+            metric['loss'].append(jnp.array(losses).mean())
 
             # RESET (shuffle) TRAINING DATA ITERATOR
             self.data_iter_train = dataloader.simulator_state_generator(self.data_config_train)
@@ -243,19 +245,24 @@ class make_train:
 
                 current_state = self.env.reset(scenario)
 
+                def extand(x):
+                    if isinstance(x, jnp.ndarray):
+                        return x[jnp.newaxis, ...]
+                    else:
+                        return x
+
                 def _eval_step(cary, unused):
 
                     current_state, rnn_state = cary
                     
                     done = jnp.tile(current_state.is_done, (self.config['num_envs_eval'],))
-                    full_obsv = datatypes.sdc_observation_from_state(current_state,
-                                                                roadgraph_top_k=self.config['roadgraph_top_k'])
-                    obsv = full_obsv.trajectory.xy # /!\ TODO: need to remove the unvalid object
+                    obsv = self.extractor(current_state)
                     
                     # Add a mask here
                     
-                    rnn_state, data_action, _ = network.apply(train_state.params, rnn_state, (obsv[jnp.newaxis, ...], done[jnp.newaxis, ...]))
-                    action = datatypes.Action(data=data_action[0], valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
+                    rnn_state, data_action, _ = network.apply(train_state.params,rnn_state,(jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
+                    action = datatypes.Action(data=data_action[0], 
+                                              valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
 
                     current_state = self.env.step(current_state, action)
                     
@@ -265,11 +272,11 @@ class make_train:
 
                 _, scenario_metrics = jax.lax.scan(_eval_step, (current_state, rnn_state), None, TRAJ_LENGTH - self.env.config.init_steps)
 
-                return scenario_metrics
+                return
             
             all_metrics = {'log_divergence': [],
-                                'overlap': [],
-                                'offroad': []}
+                            'overlap': [],
+                            'offroad': []}
             
             jit_eval_scenario = jax.jit(_eval_scenario)
 
@@ -285,8 +292,7 @@ class make_train:
             # RESET VALIDATION DATA ITER
             self.data_iter_val = dataloader.simulator_state_generator(self.data_config_val)
 
-            return train_state, all_metrics
-    
+            return train_state, all_metrics    
         
         rng, _rng = jax.random.split(rng)
         metrics = {}
@@ -300,7 +306,7 @@ class make_train:
             print(train_message)
 
             # Validation
-            train_state, val_metric = _evaluate_epoch(train_state)
+            _, val_metric = _evaluate_epoch(train_state)
             metrics[epoch]['validation'] = val_metric
 
             val_message = f'Epoch | {epoch} | Val | '
