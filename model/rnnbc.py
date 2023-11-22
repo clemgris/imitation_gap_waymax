@@ -272,7 +272,7 @@ class make_train:
 
                 _, scenario_metrics = jax.lax.scan(_eval_step, (current_state, rnn_state), None, TRAJ_LENGTH - self.env.config.init_steps)
 
-                return
+                return scenario_metrics
             
             all_metrics = {'log_divergence': [],
                             'overlap': [],
