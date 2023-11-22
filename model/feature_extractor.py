@@ -1,20 +1,25 @@
-import jax
-import jax.numpy as jnp
-import numpy as np
-import dataclasses
-
 import flax.linen as nn
+import jax.numpy as jnp
+from typing import List
 
+from flax.linen.initializers import constant, orthogonal
 
-class XYExtractor(nn.Module):
-    def __init__(self, max_num_obj: int):
-        super().__init__()
-        self.max_num_obj = max_num_obj
+class FlattenKeyExtractor(nn.Module):
+    hidden_layers: int
+    keys: List
 
-    def setup(self):
-        # Define the setup method to set the feature shape
-        self._feature_shape = self.max_num_obj * 2
-
+    @nn.compact
     def __call__(self, obs):
-        T, B = obs.shape[:2]  # Extract dimensions T (time_steps) and B (batch_size) from obs shape
-        return obs.reshape((T, B, -1)) # Flatten
+        outputs = []
+        for key in self.keys:
+            x = obs[key]
+            T, B = x.shape[:2]  # Extract dimensions T (time_steps) and B (batch_size) from obs shape
+            x = x.reshape((T, B, -1)) # Flatten
+            outputs.append(x)
+        
+        flattened = jnp.concatenate(outputs, axis=-1)
+
+        output = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(flattened)
+
+        return output
+
