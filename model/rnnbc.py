@@ -1,4 +1,5 @@
 from flax.training.train_state import TrainState
+import functools
 import jax
 import jax.numpy as jnp
 from jax import random
@@ -43,23 +44,30 @@ class make_train:
     def __init__(self, 
                  config,
                  env_config,
-                 data_config_train,
-                 data_config_val):
+                 train_dataset,
+                 val_dataset):
 
         self.config = config
         self.env_config = env_config
-        self.data_config_train = data_config_train
-        self.data_config_val = data_config_val
 
         # Device
         self.devices = jax.devices()
         print(f'Available devices: {self.devices}')
 
-        # TRAINING DATA ITERATOR
-        self.data_iter_train = dataloader.simulator_state_generator(self.data_config_train)
+        # Postprocessing function
+        self._post_process = functools.partial(
+            dataloader.womd_factories.simulator_state_from_womd_dict,
+            include_sdc_paths=config['include_sdc_paths'],
+              )
+        
+        # TRAINING DATASET
+        self.train_dataset = train_dataset
 
-        # VALIDATION DATA ITER
-        self.data_iter_val = dataloader.simulator_state_generator(self.data_config_val)
+        # VALIDATION DATASET
+        self.val_dataset = val_dataset
+        
+        # Random key
+        self.key = random.PRNGKey(self.config['key'])
 
         # DEFINE ENV
         self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
@@ -101,13 +109,11 @@ class make_train:
                                  config=self.config)
         
         feature_extractor_shape = self.feature_extractor_kwargs['hidden_layers']
-        
-        rng, _rng = jax.random.split(random.PRNGKey(self.config['key']))
 
         init_x = self.extractor.init_x()
         init_rnn_state_train = ScannedRNN.initialize_carry((self.config["num_envs"], feature_extractor_shape))
         
-        network_params = network.init(_rng, init_rnn_state_train, init_x)
+        network_params = network.init(self.key, init_rnn_state_train, init_x)
         
         if self.config["anneal_lr"]:
             tx = optax.chain(
@@ -220,16 +226,21 @@ class make_train:
             
             losses = []
             jit_update_scenario = jax.jit(_update_scenario)
-            for scenario in tqdm(self.data_iter_train, desc='Training', total=N_TRAINING // self.config['num_envs'] + 1):
-                if not jnp.any(scenario.object_metadata.is_sdc): # Scenario does not contain the SDC 
+            jit_postprocess_fn = jax.jit(self._post_process)
+
+            for data in tqdm(self.train_dataset.as_numpy_iterator(), desc='Training', total=N_TRAINING // self.config['num_envs']):
+                scenario = jit_postprocess_fn(data)
+                if not jnp.any(scenario.object_metadata.is_sdc):
+                    # Scenario does not contain the SDC 
                     pass
                 else:
                     train_state, loss = jit_update_scenario(train_state, scenario)
                     losses.append(loss)
             metric['loss'].append(jnp.array(losses).mean())
 
-            # RESET (shuffle) TRAINING DATA ITERATOR
-            self.data_iter_train = dataloader.simulator_state_generator(self.data_config_train)
+            # SUFFLE TRAINING DATA ITERATOR
+            new_key, self.key = jax.random.split(self.key)
+            self.train_dataset.shuffle(self.config['shuffle_buffer_size'], new_key)
 
             return train_state, metric
         
@@ -279,9 +290,12 @@ class make_train:
                             'offroad': []}
             
             jit_eval_scenario = jax.jit(_eval_scenario)
+            jit_postprocess_fn = jax.jit(self._post_process)
 
-            for scenario in tqdm(self.data_iter_val, desc='Validation', total=N_VALIDATION // self.config['num_envs_eval'] + 1):
-                if not jnp.any(scenario.object_metadata.is_sdc): # Scenario does not contain the SDC 
+            for data in tqdm(self.val_dataset.as_numpy_iterator(), desc='Validation', total=N_VALIDATION // self.config['num_envs_eval'] + 1):
+                scenario = jit_postprocess_fn(data)
+                if not jnp.any(scenario.object_metadata.is_sdc):
+                    # Scenario does not contain the SDC 
                     pass
                 else:
                     scenario_metrics = jit_eval_scenario(train_state, scenario)
@@ -289,12 +303,8 @@ class make_train:
                         if jnp.any(value.valid):
                             all_metrics[key].append(value.value[value.valid].mean())
 
-            # RESET VALIDATION DATA ITER
-            self.data_iter_val = dataloader.simulator_state_generator(self.data_config_val)
-
             return train_state, all_metrics    
         
-        rng, _rng = jax.random.split(rng)
         metrics = {}
         for epoch in range(self.config["num_epochs"]):
             metrics[epoch] = {}
