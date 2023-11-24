@@ -67,7 +67,7 @@ class make_train:
         self.val_dataset = val_dataset
         
         # Random key
-        self.key = random.PRNGKey(self.config['key'])
+        self.key = self.config['key']
 
         # DEFINE ENV
         self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
@@ -113,7 +113,7 @@ class make_train:
         init_x = self.extractor.init_x()
         init_rnn_state_train = ScannedRNN.initialize_carry((self.config["num_envs"], feature_extractor_shape))
         
-        network_params = network.init(self.key, init_rnn_state_train, init_x)
+        network_params = network.init(random.PRNGKey(self.key), init_rnn_state_train, init_x)
         
         if self.config["anneal_lr"]:
             tx = optax.chain(
@@ -239,8 +239,8 @@ class make_train:
             metric['loss'].append(jnp.array(losses).mean())
 
             # SUFFLE TRAINING DATA ITERATOR
-            new_key, self.key = jax.random.split(self.key)
-            self.train_dataset.shuffle(self.config['shuffle_buffer_size'], new_key)
+            self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
+            self.train_dataset.shuffle(self.config['shuffle_buffer_size'], self.key)
 
             return train_state, metric
         

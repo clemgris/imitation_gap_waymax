@@ -7,6 +7,10 @@ from waymax import config as _config
 from waymax import dataloader
 from rnnbc import make_train
 
+import os
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 ##
 # CONFIG
 ##
@@ -35,8 +39,8 @@ config = {
     'shuffle_seed': 123,
     'shuffle_buffer_size': 1_000,
     'total_timesteps': 100,
-    'training_path': '/data/saruman/cleain/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
-    'validation_path': '/data/saruman/cleain/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150'
+    'training_path': '/data/draco/cleain/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
+    'validation_path': '/data/draco/cleain/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150'
     }
 
 # Ckeckpoint path
