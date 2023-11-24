@@ -3,8 +3,8 @@ FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y software-properties-common gcc && \
-    add-apt-repository -y ppa:deadsnakes/ppa && apt-get install -y cmake && \
-    apt install tmux && apt install ffmpeg
+    add-apt-repository -y ppa:deadsnakes/ppa && apt-get install -y cmake
+    #apt-get install ffmpeg && apt-get install tmux
 
 RUN apt-get -y update && \
     apt-get -y install git vim sudo curl wget apt-transport-https ca-certificates gnupg \
