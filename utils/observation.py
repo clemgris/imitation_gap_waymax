@@ -57,7 +57,7 @@ def last_log_obs_from_state(state: datatypes.simulator_state.SimulatorState,
         is_ego=jnp.zeros(metadata.shape, dtype=jnp.bool_),  # Placeholder
     )
 
-    def _tree_expand_and_repeat(tree: Any, repeats: int, axis: int) -> datatypes.array.PyTree:
+    def _tree_expand_and_repeat(tree: Any, repeats: int, axis: int) -> datatypes.PyTree:
         def _expand_and_repeat(x: jax.Array) -> jax.Array:
             return jnp.repeat(jnp.expand_dims(x, axis=axis), repeats, axis=axis)
 
