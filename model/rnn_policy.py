@@ -37,7 +37,6 @@ class ScannedRNN(nn.Module):
 
 class ActorCriticRNN(nn.Module):
     action_dim: int
-    config: dict
     feature_extractor_class: nn.Module
     feature_extractor_kwargs: Optional[Union[Dict, None]]
 
