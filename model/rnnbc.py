@@ -20,8 +20,8 @@ import sys
 sys.path.append('./')
 
 from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
-from feature_extractor import FlattenKeyExtractor
-from state_preprocessing import ExtractXY, ExtractXYGoal
+from feature_extractor import FlattenKeyExtractor, KeyExtractor
+from state_preprocessing import ExtractXY, ExtractXYGoal, ExtractXYGoalMap
 from rnn_policy import ActorCriticRNN, ScannedRNN
 
 
@@ -33,9 +33,11 @@ class Transition(NamedTuple):
 extractors = {
     'ExtractXY': ExtractXY,
     'ExtractXYGoal': ExtractXYGoal,
+    'ExtractXYGoalMap': ExtractXYGoalMap
 }
 feature_extractors = {
-    'FlattenKeyExtractor': FlattenKeyExtractor
+    'FlattenKeyExtractor': FlattenKeyExtractor,
+    'KeyExtractor': KeyExtractor
 }
 
 
@@ -70,7 +72,16 @@ class make_train:
         self.key = self.config['key']
 
         # DEFINE ENV
-        self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
+        if 'dynamics' not in self.config.keys():
+            self.config['dynamics'] = 'bicycle'
+        
+        if self.config['dynamics'] == 'bicycle':
+            self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
+        elif self.config['dynamics'] == 'delta':
+            self.wrapped_dynamics_model = dynamics.DeltaLocal()
+        else:
+            raise ValueError('Unknown dynamics')
+
         self.dynamics_model = _env.PlanningAgentDynamics(self.wrapped_dynamics_model)
 
         if config['discrete']:
@@ -97,7 +108,7 @@ class make_train:
 
     # SCHEDULER
     def linear_schedule(self, count):
-        frac = (1.0 - (count // (self.config["num_envs"] * self.config['n_train_per_epoch'])))
+        frac = (1.0 - (count // (self.config["num_envs"] * N_TRAINING)))
         return self.config["lr"] * frac
 
     def train(self,):
@@ -105,10 +116,9 @@ class make_train:
         # INIT NETWORK
         network = ActorCriticRNN(self.dynamics_model.action_spec().shape[0],
                                  feature_extractor_class=self.feature_extractor ,
-                                 feature_extractor_kwargs=self.feature_extractor_kwargs,
-                                 config=self.config)
+                                 feature_extractor_kwargs=self.feature_extractor_kwargs)
         
-        feature_extractor_shape = self.feature_extractor_kwargs['hidden_layers']
+        feature_extractor_shape = self.feature_extractor_kwargs['final_hidden_layers']
 
         init_x = self.extractor.init_x()
         init_rnn_state_train = ScannedRNN.initialize_carry((self.config["num_envs"], feature_extractor_shape))

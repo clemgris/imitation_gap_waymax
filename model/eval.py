@@ -5,8 +5,9 @@ import jax.numpy as jnp
 from jax import random
 
 import os
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 import optax
-import pickle
 from tqdm import tqdm
 
 from typing import NamedTuple
@@ -70,7 +71,13 @@ class make_eval:
         self.key = self.config['key']
 
         # DEFINE ENV
-        self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
+        if self.config['dynamics'] == 'bicycle':
+            self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
+        elif self.config['dynamics'] == 'delta':
+            self.wrapped_dynamics_model = dynamics.DeltaLocal()
+        else:
+            raise ValueError('Unknown dynamics')
+        
         self.dynamics_model = _env.PlanningAgentDynamics(self.wrapped_dynamics_model)
 
         if config['discrete']:
@@ -105,10 +112,9 @@ class make_eval:
         # INIT NETWORK
         network = ActorCriticRNN(self.dynamics_model.action_spec().shape[0],
                                  feature_extractor_class=self.feature_extractor ,
-                                 feature_extractor_kwargs=self.feature_extractor_kwargs,
-                                 config=self.config)
+                                 feature_extractor_kwargs=self.feature_extractor_kwargs)
         
-        feature_extractor_shape = self.feature_extractor_kwargs['hidden_layers']
+        feature_extractor_shape = self.feature_extractor_kwargs['final_hidden_layers']
 
         # init_x = self.extractor.init_x()
         # init_rnn_state_train = ScannedRNN.initialize_carry((self.config["num_envs"], feature_extractor_shape))
