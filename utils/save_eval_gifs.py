@@ -1,6 +1,3 @@
-
-
-
 import functools
 import jax
 import jax.numpy as jnp
@@ -88,7 +85,13 @@ class save_eval:
         self.key = self.config['key']
 
         # DEFINE ENV
-        self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
+        if self.config['dynamics'] == 'bicycle':
+            self.wrapped_dynamics_model = dynamics.InvertibleBicycleModel()
+        elif self.config['dynamics'] == 'delta':
+            self.wrapped_dynamics_model = dynamics.DeltaLocal()
+        else:
+            raise ValueError('Unknown dynamics')
+        
         self.dynamics_model = _env.PlanningAgentDynamics(self.wrapped_dynamics_model)
 
         if config['discrete']:
@@ -118,15 +121,14 @@ class save_eval:
         frac = (1.0 - (count // (self.config["num_envs"] * self.config['n_train_per_epoch'])))
         return self.config["lr"] * frac
 
-    def train(self,):
+    def save(self,):
         
         # INIT NETWORK
         network = ActorCriticRNN(self.dynamics_model.action_spec().shape[0],
                                  feature_extractor_class=self.feature_extractor ,
-                                 feature_extractor_kwargs=self.feature_extractor_kwargs,
-                                 config=self.config)
+                                 feature_extractor_kwargs=self.feature_extractor_kwargs)
         
-        feature_extractor_shape = self.feature_extractor_kwargs['hidden_layers']
+        feature_extractor_shape = self.feature_extractor_kwargs['final_hidden_layers']
 
         # init_x = self.extractor.init_x()
         # init_rnn_state_train = ScannedRNN.initialize_carry((self.config["num_envs"], feature_extractor_shape))
@@ -267,7 +269,7 @@ class save_eval:
 
 # Training config
 load_folder = '/data/draco/cleain/imitation_gap_waymax/logs'
-expe_num = '20231123_182858'
+expe_num = '20231201_190451'
 
 with open(os.path.join(load_folder, expe_num, 'args.json'), 'r') as file:
     config = json.load(file)
@@ -317,13 +319,18 @@ env_config = _config.EnvironmentConfig(
 ##
 
 print('Load network parameters')
+n_gifs = 100
 
 with open(os.path.join(load_folder, expe_num, f'params_{n_epochs}.pkl'), 'rb') as file:
     params = pickle.load(file)
 
 save_path = os.path.join('../animation', expe_num)
 os.makedirs(save_path, exist_ok=True)
-save_gif = save_eval(config, env_config, val_dataset, params, 100, save_path)
+
+with open(os.path.join(save_path, 'args.json'), 'w') as json_file:
+    json.dump(config, json_file, indent=4)
+
+save_gif = save_eval(config, env_config, val_dataset, params, n_gifs, save_path)
 
 # with jax.disable_jit(): # DEBUG
-save_gif.train()
+save_gif.save()
