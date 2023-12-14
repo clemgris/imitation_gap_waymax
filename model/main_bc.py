@@ -1,5 +1,6 @@
 from datetime import datetime
 import functools
+import jax
 import json
 import os 
 
@@ -7,8 +8,18 @@ from waymax import config as _config
 from waymax import dataloader
 from rnnbc import make_train
 
+
+# Desable preallocation for jax and tensorflow
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
+import tensorflow as tf
+gpus = tf.config.experimental.list_physical_devices('GPU')
+
+if gpus:
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+
 
 ##
 # CONFIG
@@ -19,10 +30,13 @@ config = {
     'anneal_lr': False,
     'bins': 128,
     'discrete': False,
-    'extractor': 'ExtractXYGoal', #ExtractXY
-    'feature_extractor': 'FlattenKeyExtractor', #FlattenXYExtractor
-    'feature_extractor_kwargs': {'keys': ['xy', 'proxy_goal'],
-                                 'hidden_layers': 128}, # {}
+    'dynamics': 'delta',
+    'extractor': 'ExtractObs',
+    'feature_extractor': 'KeyExtractor',
+    'feature_extractor_kwargs': {'final_hidden_layers': 128,
+                                 'hidden_layers': {'roadgraph_map': 128},
+                                 'keys': ['xy',
+                                          'roadgraph_map']}, 
     'freq_save': 10,
     'include_sdc_paths': False,
     'key': 42,
@@ -30,11 +44,11 @@ config = {
     "max_grad_norm": 0.5,
     'max_num_obj': 8,
     'max_num_rg_points': 20000,
-    'num_envs': 32,
+    'num_envs': 16,
     'num_envs_eval': 16,
     "num_epochs": 100,
     'num_steps': 80,
-    'roadgraph_top_k': 100,
+    'roadgraph_top_k': 2000,
     'shuffle_seed': 123,
     'shuffle_buffer_size': 1_000,
     'total_timesteps': 100,
@@ -124,7 +138,6 @@ env_config = _config.EnvironmentConfig(
 ##
 # TRAINING
 ##
-
 training = make_train(config,
                       env_config,
                       train_dataset,
