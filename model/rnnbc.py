@@ -20,8 +20,8 @@ import sys
 sys.path.append('./')
 
 from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
-from feature_extractor import FlattenKeyExtractor, KeyExtractor
-from state_preprocessing import ExtractXY, ExtractXYGoal, ExtractXYGoalMap
+from feature_extractor import KeyExtractor
+from state_preprocessing import ExtractObs
 from rnn_policy import ActorCriticRNN, ScannedRNN
 
 
@@ -31,15 +31,11 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
 
 extractors = {
-    'ExtractXY': ExtractXY,
-    'ExtractXYGoal': ExtractXYGoal,
-    'ExtractXYGoalMap': ExtractXYGoalMap
+    'ExtractObs': ExtractObs
 }
 feature_extractors = {
-    'FlattenKeyExtractor': FlattenKeyExtractor,
     'KeyExtractor': KeyExtractor
 }
-
 
 class make_train:
     

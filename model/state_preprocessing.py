@@ -9,6 +9,64 @@ from waymax import datatypes
 
 from utils.observation import last_sdc_observation_for_current_sdc_from_state
 
+
+def extract_xy(state, obs):
+    traj = obs.trajectory.xy
+
+    valid = obs.trajectory.valid[..., None]
+    masked_traj = jnp.where(valid, traj, UNVALID_MASK_VALUE * jnp.ones_like(traj))
+    return masked_traj
+
+def extract_goal(state, obs):
+    _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
+
+    last_sdc_obs = last_sdc_observation_for_current_sdc_from_state(state) # Last obs of the log in the current SDC pos referential
+    last_sdc_xy = jnp.take_along_axis(last_sdc_obs.trajectory.xy[..., 0, :], sdc_idx[..., None, None], axis=-2)
+    
+    mask = jnp.any(state.object_metadata.is_sdc)[..., None, None] # Mask if scenario with no SDC
+    proxy_goal = last_sdc_xy * mask
+
+    return proxy_goal
+
+def extract_roadgraph(state, obs):
+    valid_roadmap_point = obs.roadgraph_static_points.valid[..., None]
+
+    roadmap_point = obs.roadgraph_static_points.xy
+    masked_roadmap_point = jnp.where(valid_roadmap_point, roadmap_point, UNVALID_MASK_VALUE * jnp.ones_like(roadmap_point))
+
+    roadmap_dir = obs.roadgraph_static_points.dir_xy
+    masked_roadmap_dir = jnp.where(valid_roadmap_point, roadmap_dir, UNVALID_MASK_VALUE * jnp.ones_like(roadmap_dir))
+
+    roadmap_type = obs.roadgraph_static_points.types
+    roadmap_type_one_hot = jax.nn.one_hot(roadmap_type, 20)
+
+    roadmap_point_features = jnp.concatenate((masked_roadmap_point, masked_roadmap_dir, roadmap_type_one_hot), axis=-1)
+
+    return roadmap_point_features
+
+def extract_trafficlights(state, obs):
+    traffic_lights = obs.traffic_lights.xy
+    valid = obs.traffic_lights.valid[..., None]
+    masked_traffic_lights = jnp.where(valid, traffic_lights, UNVALID_MASK_VALUE * jnp.ones_like(traffic_lights))
+
+    traffic_lights_type = obs.traffic_lights.state
+    traffic_lights_type_one_hot = jax.nn.one_hot(traffic_lights_type, 9)
+
+    traffic_lights_features = jnp.concatenate((masked_traffic_lights, traffic_lights_type_one_hot), axis=-1)
+    return traffic_lights_features
+
+EXTRACTOR_DICT = {'xy': extract_xy,
+                  'proxy_goal': extract_goal,
+                  'roadgraph_map': extract_roadgraph,
+                  'traffic_lights': extract_trafficlights}
+
+def init_dict(config):
+    return {'xy': jnp.zeros((1, config["num_envs"], config['max_num_obj'], 2)),
+            'proxy_goal': jnp.zeros((1, config["num_envs"], 2)),
+            'roadgraph_map': jnp.zeros((1, config["num_envs"], config['roadgraph_top_k'], 24)),
+            'traffic_lights': jnp.zeros((1, config["num_envs"], 16, 11))
+            }
+
 class Extractor(ABC):
 
     @abstractmethod
@@ -20,48 +78,22 @@ class Extractor(ABC):
         pass
 
 @dataclass
-class ExtractXY(Extractor):
+class ExtractObs(Extractor):
     config: Dict
 
     def __call__(self, state):
+        obs_features = {}
         obs = datatypes.sdc_observation_from_state(state,
                                                    roadgraph_top_k=self.config['roadgraph_top_k'])
-        traj = obs.trajectory.xy
-        valid = obs.trajectory.valid[..., None]
-        masked_traj = jnp.where(valid, traj, UNVALID_MASK_VALUE * jnp.ones_like(traj))
-
-        return {'xy': masked_traj}
+        for key in self.config['feature_extractor_kwargs']['keys']:
+            obs_features[key] = EXTRACTOR_DICT[key](state, obs)
+        return obs_features
     
     def init_x(self,):
-        return  ({'xy': jnp.zeros((1, self.config["num_envs"], self.config['max_num_obj'], 2))},
+        init_obs = {}
+        all_init_dict = init_dict(self.config)
+        for key in self.config['feature_extractor_kwargs']['keys']:
+            init_obs[key] = all_init_dict[key]
+        return  (init_obs,
                  jnp.zeros((1, self.config["num_envs"]), dtype=bool),
                  )
-    
-@dataclass
-class ExtractXYGoal(Extractor):
-    config: Dict
-
-    def __call__(self, state): 
-        
-        # Last obs of the log in the current SDC pos referential
-        last_sdc_pos = last_sdc_observation_for_current_sdc_from_state(state)
-
-        # Get the last log pos of the SDC
-        _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
-        sdc_xy = jnp.take_along_axis(last_sdc_pos.trajectory.xy[..., 0, :], sdc_idx[..., None, None], axis=-2)
-        
-        # Mask if no SDC
-        mask = jnp.any(state.object_metadata.is_sdc)[..., None, None]
-        # Extract batched proxy goal
-        proxy_goal = sdc_xy * mask
-
-        return {"xy": ExtractXY(self.config)(state)['xy'],
-                "proxy_goal": proxy_goal}
-
-    def init_x(self):
-
-        return(
-            {'xy': jnp.zeros((1, self.config["num_envs"], self.config['max_num_obj'], 2)),
-            'proxy_goal': jnp.zeros((1, self.config["num_envs"], 2))},
-            jnp.zeros((1, self.config["num_envs"]), dtype=bool),
-        )
