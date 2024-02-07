@@ -15,6 +15,7 @@ def extract_xy(state, obs):
 
     valid = obs.trajectory.valid[..., None]
     masked_traj = jnp.where(valid, traj, UNVALID_MASK_VALUE * jnp.ones_like(traj))
+    
     return masked_traj
 
 def extract_goal(state, obs):
@@ -41,7 +42,7 @@ def extract_roadgraph(state, obs):
     roadmap_type_one_hot = jax.nn.one_hot(roadmap_type, 20)
 
     roadmap_point_features = jnp.concatenate((masked_roadmap_point, masked_roadmap_dir, roadmap_type_one_hot), axis=-1)
-
+    
     return roadmap_point_features
 
 def extract_trafficlights(state, obs):
@@ -53,6 +54,7 @@ def extract_trafficlights(state, obs):
     traffic_lights_type_one_hot = jax.nn.one_hot(traffic_lights_type, 9)
 
     traffic_lights_features = jnp.concatenate((masked_traffic_lights, traffic_lights_type_one_hot), axis=-1)
+    
     return traffic_lights_features
 
 EXTRACTOR_DICT = {'xy': extract_xy,
@@ -86,7 +88,7 @@ class ExtractObs(Extractor):
         obs = datatypes.sdc_observation_from_state(state,
                                                    roadgraph_top_k=self.config['roadgraph_top_k'])
         for key in self.config['feature_extractor_kwargs']['keys']:
-            obs_features[key] = EXTRACTOR_DICT[key](state, obs)
+            obs_features[key] = jnp.squeeze(EXTRACTOR_DICT[key](state, obs))
         return obs_features
     
     def init_x(self,):
