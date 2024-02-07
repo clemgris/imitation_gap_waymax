@@ -1,14 +1,15 @@
 from datetime import datetime
 import functools
 import jax
+import jax.numpy as jnp
 import json
-import os 
+import os
 
 from waymax import config as _config
 from waymax import dataloader
 from rnnbc import make_train
 
-
+from utils.dataloader import tf_examples_dataset
 # Desable preallocation for jax and tensorflow
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -19,7 +20,6 @@ gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     for gpu in gpus:
         tf.config.experimental.set_memory_growth(gpu, True)
-
 
 ##
 # CONFIG
@@ -34,13 +34,15 @@ config = {
     'extractor': 'ExtractObs',
     'feature_extractor': 'KeyExtractor',
     'feature_extractor_kwargs': {'final_hidden_layers': 128,
-                                 'hidden_layers': {'roadgraph_map': 128},
+                                #  'hidden_layers': {'roadgraph_map': 8},
                                  'keys': ['xy',
-                                          'roadgraph_map']}, 
+                                          'proxy_goal',
+                                        #   'roadgraph_map'
+                                          ]}, 
     'freq_save': 10,
     'include_sdc_paths': False,
     'key': 42,
-    'lr': 3e-4,
+    'lr': 3e-3,
     "max_grad_norm": 0.5,
     'max_num_obj': 8,
     'max_num_rg_points': 20000,
@@ -50,8 +52,10 @@ config = {
     'num_steps': 80,
     'roadgraph_top_k': 2000,
     'shuffle_seed': 123,
-    'shuffle_buffer_size': 1_000,
+    'shuffle_buffer_size': 1000, # 1000
     'total_timesteps': 100,
+    'min_mean_speed': None,
+    'num_files': 100,
     'training_path': '/data/draco/cleain/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
     'validation_path': '/data/draco/cleain/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150'
     }
@@ -96,9 +100,8 @@ WOD_1_1_0_VALIDATION = _config.DatasetConfig(
     repeat=1
 )
 
-
 # Training dataset
-train_dataset = dataloader.tf_examples_dataset(
+train_dataset = tf_examples_dataset(
     path=WOD_1_1_0_TRAINING.path,
     data_format=WOD_1_1_0_TRAINING.data_format,
     preprocess_fn=functools.partial(dataloader.preprocess_serialized_womd_data, config=WOD_1_1_0_TRAINING),
@@ -111,7 +114,11 @@ train_dataset = dataloader.tf_examples_dataset(
     drop_remainder=WOD_1_1_0_TRAINING.drop_remainder,
     tf_data_service_address=WOD_1_1_0_TRAINING.tf_data_service_address,
     batch_by_scenario=WOD_1_1_0_TRAINING.batch_by_scenario,
+    filter_function=None,
+    num_files = config['num_files']
 )
+
+data = train_dataset.as_numpy_iterator().next() # DEBUG
 
 # Validation dataset
 val_dataset = dataloader.tf_examples_dataset(
@@ -141,7 +148,9 @@ env_config = _config.EnvironmentConfig(
 training = make_train(config,
                       env_config,
                       train_dataset,
-                      val_dataset)
+                      val_dataset,
+                      data # DEBUG
+                      )
 
 # with jax.disable_jit(): # DEBUG
 training_dict = training.train()
