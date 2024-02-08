@@ -88,7 +88,12 @@ class ExtractObs(Extractor):
         obs = datatypes.sdc_observation_from_state(state,
                                                    roadgraph_top_k=self.config['roadgraph_top_k'])
         for key in self.config['feature_extractor_kwargs']['keys']:
-            obs_features[key] = jnp.squeeze(EXTRACTOR_DICT[key](state, obs))
+            obs_feature = EXTRACTOR_DICT[key](state, obs)
+            B = obs_feature.shape[0]
+            obs_feature = jnp.squeeze(obs_feature)
+            if B == 1:
+                obs_feature = obs_feature[jnp.newaxis, ...]
+            obs_features[key] = obs_feature
         return obs_features
     
     def init_x(self,):
