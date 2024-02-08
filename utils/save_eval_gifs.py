@@ -4,10 +4,17 @@ import jax.numpy as jnp
 import json
 from waymax import config as _config
 
-
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
+import tensorflow as tf
+gpus = tf.config.experimental.list_physical_devices('GPU')
+
+if gpus:
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+
+import argparse
 import os
 import optax
 import pickle
@@ -27,10 +34,9 @@ import sys
 sys.path.append('./')
 sys.path.append('../')
 
-
-from dataset.config import  N_VALIDATION, TRAJ_LENGTH
-from model.feature_extractor import FlattenKeyExtractor
-from model.state_preprocessing import ExtractXY, ExtractXYGoal
+from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
+from model.feature_extractor import KeyExtractor
+from model.state_preprocessing import ExtractObs
 from model.rnn_policy import ActorCriticRNN, ScannedRNN
 
 from viz import plot_observation_with_goal
@@ -41,11 +47,10 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
 
 extractors = {
-    'ExtractXY': ExtractXY,
-    'ExtractXYGoal': ExtractXYGoal,
+    'ExtractObs': ExtractObs
 }
 feature_extractors = {
-    'FlattenKeyExtractor': FlattenKeyExtractor
+    'KeyExtractor': KeyExtractor
 }
 
 
@@ -103,9 +108,17 @@ class save_eval:
 
         assert(not config['discrete']) # /!\ BUG using scan and DiscreteActionWrapper
         
+        if config['IDM']:
+            sim_actors = [agents.IDMRoutePolicy(
+                is_controlled_func=lambda state: 1 -  state.object_metadata.is_sdc
+                )]
+        else:
+            sim_actors = ()
+            
         self.env = _env.PlanningAgentEnvironment(
             dynamics_model=self.wrapped_dynamics_model,
             config=env_config,
+            sim_agent_actors=sim_actors
             )
 
         # DEFINE EXPERT AGENT
@@ -203,9 +216,10 @@ class save_eval:
                     sdc_obs = datatypes.sdc_observation_from_state(current_state,
                                                 roadgraph_top_k=20000)
                     reduced_sdc_obs = jax.tree_map(lambda x : x[0, ...], sdc_obs) # Unbatch
+                    
                     img = plot_observation_with_goal(reduced_sdc_obs,
                                                     obj_idx=0,
-                                                    goal=obsv['proxy_goal'][0, 0, 0])
+                                                    goal=obsv['proxy_goal'][0])
 
                     current_state = self.env.step(current_state, action)
                     
@@ -267,70 +281,81 @@ class save_eval:
 # CONFIG
 ##
 
-# Training config
-load_folder = '/data/draco/cleain/imitation_gap_waymax/logs'
-expe_num = '20231201_190451'
+parser = argparse.ArgumentParser(description="Agent evaluation")
+parser.add_argument('--expe_id', '-expe', type=str, help='Id of the experiment')
+parser.add_argument('--epochs', '-e', type=int, help='Number of training epochs')
+parser.add_argument('--IDM', '-IDM', type=int, help='Use IDM for simulated agents')
+parser.add_argument('--n_evals', '-n', type=int, help='Number of evaluation environments')
 
-with open(os.path.join(load_folder, expe_num, 'args.json'), 'r') as file:
-    config = json.load(file)
+if __name__ == "__main__":
+    args = parser.parse_args()
+    
+    # Training config
+    load_folder = '/data/draco/cleain/imitation_gap_waymax/logs'
+    expe_id = args.expe_id
 
-config['num_envs_eval'] = 1
+    with open(os.path.join(load_folder, expe_id, 'args.json'), 'r') as file:
+        config = json.load(file)
 
-n_epochs = 99
+    config['num_envs_eval'] = args.n_evals
 
-print('Create datasets')
+    n_epochs = args.epochs
 
-# Data iter config
-WOD_1_1_0_VALIDATION = _config.DatasetConfig(
-    path=config['validation_path'],
-    max_num_rg_points=config['max_num_rg_points'],
-    shuffle_seed=None,
-    data_format=_config.DataFormat.TFRECORD,
-    batch_dims = (config['num_envs_eval'],),
-    max_num_objects=config['max_num_obj'],
-    include_sdc_paths=config['include_sdc_paths'],
-    repeat=1
-)
+    print('Create datasets')
 
-# Validation dataset
-val_dataset = dataloader.tf_examples_dataset(
-    path=WOD_1_1_0_VALIDATION.path,
-    data_format=WOD_1_1_0_VALIDATION.data_format,
-    preprocess_fn=functools.partial(dataloader.preprocess_serialized_womd_data, config=WOD_1_1_0_VALIDATION),
-    shuffle_seed=WOD_1_1_0_VALIDATION.shuffle_seed,
-    shuffle_buffer_size=WOD_1_1_0_VALIDATION.shuffle_buffer_size,
-    repeat=WOD_1_1_0_VALIDATION.repeat,
-    batch_dims=WOD_1_1_0_VALIDATION.batch_dims,
-    num_shards=WOD_1_1_0_VALIDATION.num_shards,
-    deterministic=WOD_1_1_0_VALIDATION.deterministic,
-    drop_remainder=WOD_1_1_0_VALIDATION.drop_remainder,
-    tf_data_service_address=WOD_1_1_0_VALIDATION.tf_data_service_address,
-    batch_by_scenario=WOD_1_1_0_VALIDATION.batch_by_scenario,
-)
+    # Data iter config
+    WOD_1_1_0_VALIDATION = _config.DatasetConfig(
+        path=config['validation_path'],
+        max_num_rg_points=config['max_num_rg_points'],
+        shuffle_seed=None,
+        data_format=_config.DataFormat.TFRECORD,
+        batch_dims = (config['num_envs_eval'],),
+        max_num_objects=config['max_num_obj'],
+        include_sdc_paths=config['include_sdc_paths'],
+        repeat=1
+    )
 
-# Env config
-env_config = _config.EnvironmentConfig(
-    controlled_object=_config.ObjectType.SDC,
-    max_num_objects=config['max_num_obj']
-)
+    # Validation dataset
+    val_dataset = dataloader.tf_examples_dataset(
+        path=WOD_1_1_0_VALIDATION.path,
+        data_format=WOD_1_1_0_VALIDATION.data_format,
+        preprocess_fn=functools.partial(dataloader.preprocess_serialized_womd_data, config=WOD_1_1_0_VALIDATION),
+        shuffle_seed=WOD_1_1_0_VALIDATION.shuffle_seed,
+        shuffle_buffer_size=WOD_1_1_0_VALIDATION.shuffle_buffer_size,
+        repeat=WOD_1_1_0_VALIDATION.repeat,
+        batch_dims=WOD_1_1_0_VALIDATION.batch_dims,
+        num_shards=WOD_1_1_0_VALIDATION.num_shards,
+        deterministic=WOD_1_1_0_VALIDATION.deterministic,
+        drop_remainder=WOD_1_1_0_VALIDATION.drop_remainder,
+        tf_data_service_address=WOD_1_1_0_VALIDATION.tf_data_service_address,
+        batch_by_scenario=WOD_1_1_0_VALIDATION.batch_by_scenario,
+    )
+    
+    config['IDM'] = bool(args.IDM)
 
-##
-# EVALUATION
-##
+    # Env config
+    env_config = _config.EnvironmentConfig(
+        controlled_object=_config.ObjectType.SDC,
+        max_num_objects=config['max_num_obj']
+    )
 
-print('Load network parameters')
-n_gifs = 100
+    ##
+    # EVALUATION
+    ##
 
-with open(os.path.join(load_folder, expe_num, f'params_{n_epochs}.pkl'), 'rb') as file:
-    params = pickle.load(file)
+    print('Load network parameters')
+    n_gifs = 100
 
-save_path = os.path.join('../animation', expe_num)
-os.makedirs(save_path, exist_ok=True)
+    with open(os.path.join(load_folder, expe_id, f'params_{n_epochs}.pkl'), 'rb') as file:
+        params = pickle.load(file)
 
-with open(os.path.join(save_path, 'args.json'), 'w') as json_file:
-    json.dump(config, json_file, indent=4)
+    save_path = os.path.join('../animation', expe_id)
+    os.makedirs(save_path, exist_ok=True)
 
-save_gif = save_eval(config, env_config, val_dataset, params, n_gifs, save_path)
+    with open(os.path.join(save_path, 'args.json'), 'w') as json_file:
+        json.dump(config, json_file, indent=4)
 
-# with jax.disable_jit(): # DEBUG
-save_gif.save()
+    save_gif = save_eval(config, env_config, val_dataset, params, n_gifs, save_path)
+
+    # with jax.disable_jit(): # DEBUG
+    save_gif.save()

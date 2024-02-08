@@ -20,9 +20,9 @@ from waymax import agents
 import sys
 sys.path.append('./')
 
-from dataset.config import  N_VALIDATION, TRAJ_LENGTH
-from feature_extractor import FlattenKeyExtractor
-from state_preprocessing import ExtractXY, ExtractXYGoal
+from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
+from feature_extractor import KeyExtractor
+from state_preprocessing import ExtractObs
 from rnn_policy import ActorCriticRNN, ScannedRNN
 
 
@@ -32,11 +32,10 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
 
 extractors = {
-    'ExtractXY': ExtractXY,
-    'ExtractXYGoal': ExtractXYGoal,
+    'ExtractObs': ExtractObs
 }
 feature_extractors = {
-    'FlattenKeyExtractor': FlattenKeyExtractor
+    'KeyExtractor': KeyExtractor
 }
 
 
@@ -89,11 +88,19 @@ class make_eval:
 
         assert(not config['discrete']) # /!\ BUG using scan and DiscreteActionWrapper
         
+        if config['IDM']:
+            sim_actors = [agents.IDMRoutePolicy(
+                is_controlled_func=lambda state: 1 -  state.object_metadata.is_sdc
+                )]
+        else:
+            sim_actors = ()
+            
         self.env = _env.PlanningAgentEnvironment(
             dynamics_model=self.wrapped_dynamics_model,
             config=env_config,
+            sim_agent_actors=sim_actors
             )
-
+        
         # DEFINE EXPERT AGENT
         self.expert_agent = agents.create_expert_actor(self.dynamics_model)
 
