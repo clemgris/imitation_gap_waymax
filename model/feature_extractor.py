@@ -19,11 +19,11 @@ class MapEncoder(nn.Module):
         x = roadmap_features
         
         x = nn.Conv(self.hidden_layers, kernel_size=(3,))(x)
-        nn.relu(x)
+        x = nn.relu(x)
         x = nn.max_pool(x, window_shape=(1, 2), strides=(1, 2))
 
         x = nn.Conv(self.hidden_layers, kernel_size=(3,))(x)
-        nn.relu(x)
+        x = nn.relu(x)
         x = nn.max_pool(x, window_shape=(1, 2), strides=(1, 2))
 
         x = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(x)
@@ -49,8 +49,11 @@ class PolylineEncoder(nn.Module):
 
             # Points features
             points_features = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(points) # (B * N, H)
+            points_features = jax.nn.relu(points_features)
             points_features = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(points_features) # (B * N, H)
+            points_features = jax.nn.relu(points_features)
             points_features = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(points_features) # (B * N, H)
+            points_features = jax.nn.relu(points_features)
 
             H = self.hidden_layers
             points_features = jnp.where(valid.repeat(H, axis=-1),
@@ -61,10 +64,14 @@ class PolylineEncoder(nn.Module):
             # Polylines features
             polylines_features = jnp.zeros((B, N, H)) # (B, N, H)
             for type in range(NUM_POLYLINE_TYPES):
-                polyline_point_features = jnp.where(types == type, points_features, jnp.zeros((B * N, H))) # (B * N, H)
-                unit_polyline_features = polyline_point_features.reshape((B, N, -1)).max(axis=-2, keepdims=True) # (B, 1, H)
+                polyline_point_features = jnp.where(types == type, 
+                                                    points_features, 
+                                                    jnp.zeros((B * N, H))) # (B * N, H)
+                
+                pooled_features = polyline_point_features.reshape((B, N, -1)).max(axis=-2, keepdims=True) # (B, 1, H)
+                
                 polylines_features = jnp.where(types.reshape((B, N, -1)).repeat(H, axis=-1) == type,
-                                            unit_polyline_features.repeat(N, -2), 
+                                            pooled_features.repeat(N, -2), 
                                             polylines_features) # (B, N, H)
                 
             
@@ -74,8 +81,11 @@ class PolylineEncoder(nn.Module):
 
             # Augmented points features
             points_features = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(points_features) # (B * N, H)
+            points_features = jax.nn.relu(points_features)
             points_features = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(points_features) # (B * N, H)
+            points_features = jax.nn.relu(points_features)
             points_features = nn.Dense(self.hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(points_features) # (B * N, H)
+            points_features = jax.nn.relu(points_features)
 
             H = self.hidden_layers
             points_features = jnp.where(valid.repeat(H, axis=-1),
@@ -84,13 +94,16 @@ class PolylineEncoder(nn.Module):
                                         ) # (B * N, H)
 
             # Polylines features
-            all_unit_polyline_features = []
+            all_pooled_features = []
             for type in range(NUM_POLYLINE_TYPES):
-                polyline_point_features = jnp.where(types == type, points_features, jnp.zeros((B * N, H))) # (B * N, H)                
-                unit_polyline_features = polyline_point_features.reshape((B, N, -1)).max(axis=-2, keepdims=True) # (B, 1, H)
-                all_unit_polyline_features.append(unit_polyline_features)
+                polyline_point_features = jnp.where(types == type,
+                                                    points_features,
+                                                    jnp.zeros((B * N, H))) # (B * N, H)   
+                            
+                pooled_features = polyline_point_features.reshape((B, N, -1)).max(axis=-2, keepdims=True) # (B, 1, H)
+                all_pooled_features.append(pooled_features)
             
-            return jnp.concatenate(all_unit_polyline_features, axis=1) # (B, NUM_POLYLINE_TYPES, H)
+            return jnp.concatenate(all_pooled_features, axis=1) # (B, NUM_POLYLINE_TYPES, H)
         
         return jax.vmap(single_call)(points) # (T, B, NUM_POLYLINE_TYPES, H)
     
@@ -126,4 +139,5 @@ class KeyExtractor(nn.Module):
         flattened = jnp.concatenate(outputs, axis=-1)
     
         output = nn.Dense(self.final_hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(flattened)
+        output = jax.nn.relu(output)
         return output
