@@ -12,6 +12,7 @@ from eval import make_eval
 
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import tensorflow as tf
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -99,3 +100,8 @@ if __name__ == "__main__":
 
     # with jax.disable_jit(): # DEBUG
     evaluation_dict = evaluation.train()
+    
+    with open(os.path.join(load_folder, expe_num, f"eval_metrics_{n_epochs}_IDM_{config['IDM']}.pkl"), "wb") as pkl_file:
+        pickle.dump(evaluation_dict['metrics'], pkl_file)
+
+    
