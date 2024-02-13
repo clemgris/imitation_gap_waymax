@@ -38,17 +38,18 @@ config = {
                                  'keys': ['xy',
                                           'proxy_goal',
                                         #   'roadgraph_map'
-                                          ]}, 
+                                          ]},
+    'freq_eval': 10,
     'freq_save': 10,
     'include_sdc_paths': False,
     'key': 42,
-    'lr': 3e-3,
+    'lr': 3e-4,
     "max_grad_norm": 0.5,
     'max_num_obj': 8,
     'max_num_rg_points': 20000,
     'num_envs': 16,
     'num_envs_eval': 16,
-    "num_epochs": 100,
+    "num_epochs": 500,
     'num_steps': 80,
     'roadgraph_top_k': 2000,
     'shuffle_seed': 123,
@@ -56,8 +57,8 @@ config = {
     'total_timesteps': 100,
     'min_mean_speed': None,
     'num_files': 100,
-    'training_path': '/data/draco/cleain/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
-    'validation_path': '/data/draco/cleain/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150'
+    'training_path': '/data/draco/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
+    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150'
     }
 
 # Ckeckpoint path
