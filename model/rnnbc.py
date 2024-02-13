@@ -110,7 +110,7 @@ class make_train:
 
     # SCHEDULER
     def linear_schedule(self, count):
-        frac = (1.0 - (count // (self.config["num_envs"] * N_TRAINING)))
+        frac = (1.0 - (count // (self.config["num_envs"] * N_TRAINING))) # TODO: add the number of epochs
         return self.config["lr"] * frac
 
     def train(self,):
@@ -330,14 +330,15 @@ class make_train:
             print(train_message)
 
             # Validation
-            _, val_metric = _evaluate_epoch(train_state)
-            metrics[epoch]['validation'] = val_metric
+            if (epoch % self.config['freq_eval'] == 0) or (epoch == self.config['num_epochs'] - 1):
+                _, val_metric = _evaluate_epoch(train_state)
+                metrics[epoch]['validation'] = val_metric
 
-            val_message = f'Epoch | {epoch} | Val | '
-            for key, value in val_metric.items():
-                val_message += f" {key} | {jnp.array(value).mean():.4f} | "
+                val_message = f'Epoch | {epoch} | Val | '
+                for key, value in val_metric.items():
+                    val_message += f" {key} | {jnp.array(value).mean():.4f} | "
 
-            print(val_message)
+                print(val_message)
 
             if (epoch % self.config['freq_save'] == 0) or (epoch == self.config['num_epochs'] - 1):
                 past_log_metric = os.path.join(self.config['log_folder'], f'training_metrics_{epoch - self.config["freq_save"]}.pkl')
@@ -350,8 +351,8 @@ class make_train:
                     os.remove(past_log_params)
 
                 # Checkpoint
-                with open(os.path.join(self.config['log_folder'], f'training_metrics_{epoch}.pkl'), "wb") as json_file:
-                    pickle.dump(metrics, json_file)
+                with open(os.path.join(self.config['log_folder'], f'training_metrics_{epoch}.pkl'), "wb") as pkl_file:
+                    pickle.dump(metrics, pkl_file)
 
                 # Save model weights
                 with open(os.path.join(self.config['log_folder'], f'params_{epoch}.pkl'), 'wb') as f:
