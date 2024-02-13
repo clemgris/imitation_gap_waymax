@@ -30,6 +30,12 @@ RUN useradd -u $USERID --create-home $USERNAME && \
     echo "$USERNAME:$USERNAME" | chpasswd && \
     adduser $USERNAME sudo
 
+# Create the 'docker' group
+RUN groupadd -g 999 docker
+
+# Add the user to the 'docker' group
+RUN usermod -aG docker $USERNAME
+
 USER $USERNAME
 
 RUN python3 -m pip install --upgrade pip
@@ -39,7 +45,7 @@ RUN PATH="${HOME}/.local/bin:${PATH}" python3 -m pip install -r requirements.txt
 RUN PATH="${HOME}/.local/bin:${PATH}" python3 -m pip install --upgrade "jax[cuda12_pip]" \
 -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
-
+# Adding tmux configuration
 ADD .tmux.conf .
 RUN cp .tmux.conf $HOME/.tmux.conf
 
