@@ -257,14 +257,14 @@ class save_eval:
 
                     # Save gif 
                     frames = [Image.fromarray(img) for img in imgs]
-                    frames[0].save(os.path.join(self.save_path, f'ex_{tt}.gif'),
+                    frames[0].save(os.path.join(self.save_path, f'ex_{tt}_{int(config["IDM"])}.gif'),
                                    save_all=True,
                                    append_images=frames[1:],
                                    duration=100,
                                    loop=0)
 
                     # Save metric
-                    with open(os.path.join(self.save_path, f'ex_{tt}.json'), 'w') as json_file:
+                    with open(os.path.join(self.save_path, f'ex_{tt}_{int(config["IDM"])}.json'), 'w') as json_file:
                         json.dump(metrics, json_file, indent=4)             
                 if tt > self.num_gifs:
                     break
@@ -349,7 +349,7 @@ if __name__ == "__main__":
     with open(os.path.join(load_folder, expe_id, f'params_{n_epochs}.pkl'), 'rb') as file:
         params = pickle.load(file)
 
-    save_path = os.path.join('../animation', expe_id)
+    save_path = os.path.join('/data/draco/cleain/imitation_gap_waymax/animation', expe_id)
     os.makedirs(save_path, exist_ok=True)
 
     with open(os.path.join(save_path, 'args.json'), 'w') as json_file:
