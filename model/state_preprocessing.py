@@ -5,7 +5,9 @@ import jax.numpy as jnp
 from typing import Any, Dict
 
 from model.config import UNVALID_MASK_VALUE
+from model.utils import combine_two_object_pose_2d, radius_point_extra
 from waymax import datatypes
+from waymax.datatypes import transform_trajectory
 
 from utils.observation import last_sdc_observation_for_current_sdc_from_state
 
@@ -28,6 +30,87 @@ def extract_goal(state, obs):
     proxy_goal = last_sdc_xy * mask
 
     return proxy_goal
+
+def extract_heading(state, obs, radius=20):
+    """Generates the heading for the SDC to move towards 
+    the log position radius meters away from its 
+    current position.
+
+    Args:
+        state: Has shape (...,).
+        radius: the considered distance in meters.
+
+    Returns:
+        Heading with shape (..., 2). Note that the heading is in
+        the coordinate system of the current SDC position.
+    """
+    def proxy_heading(state: datatypes.simulator_state.SimulatorState,
+                    radius: float
+                    ) -> jnp.ndarray:
+        _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1) 
+
+        obj_xy = state.current_sim_trajectory.xy[..., 0, :]
+        obj_yaw = state.current_sim_trajectory.yaw[..., 0]
+        obj_valid = state.current_sim_trajectory.valid[..., 0]
+
+        _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
+
+        current_sdc_xy = jnp.take_along_axis(obj_xy, sdc_idx[..., None], axis=-2)
+        current_sdc_yaw = jnp.take_along_axis(obj_yaw, sdc_idx, axis=-1)
+        current_sdc_valid = jnp.take_along_axis(obj_valid, sdc_idx, axis=-1)
+
+        current_sdc_pose2d = datatypes.ObjectPose2D.from_center_and_yaw(
+            xy=current_sdc_xy, yaw=current_sdc_yaw, valid=current_sdc_valid
+        )
+
+        traj = state.log_trajectory
+
+        pose2d_shape = traj.shape
+        # Global coordinates pose2d
+        pose2d = datatypes.ObjectPose2D.from_center_and_yaw(
+            xy=jnp.zeros(shape=pose2d_shape + (2,)),
+            yaw=jnp.zeros(shape=pose2d_shape),
+            valid=jnp.ones(shape=pose2d_shape, dtype=jnp.bool_),
+        )
+        pose = combine_two_object_pose_2d(
+            src_pose=pose2d, dst_pose=current_sdc_pose2d
+        )
+
+        # Project log trajectory in the ref of the current SDC
+        transf_traj = transform_trajectory(traj, pose)
+
+        sdc_transf_traj_xy = jnp.take_along_axis(transf_traj.xy, sdc_idx[..., None, None], axis=0)
+        sdc_transf_traj_yaw = jnp.take_along_axis(transf_traj.yaw, sdc_idx[..., None], axis=0)
+        sdc_transf_traj_yaw = jnp.take_along_axis(transf_traj.yaw, sdc_idx[..., None], axis=0)
+
+        # Compute dist to the current SDC pos
+        dist_matrix = jnp.linalg.norm(sdc_transf_traj_xy, axis=-1)
+        dist_matrix = jnp.where((jnp.arange(91) < state.timestep)[None, ...],
+                            jnp.zeros_like(dist_matrix), 
+                            dist_matrix)
+
+        # Intersection btw the circle and log trajectory
+        _, idx_radius_point = jax.lax.top_k(dist_matrix > radius, k=1)
+        radius_point = jnp.take_along_axis(sdc_transf_traj_xy, idx_radius_point[..., None], axis=-2)
+        
+        inter_heading =  radius_point / jnp.linalg.norm(radius_point, axis=-1)
+
+        # Intersection btw the circle and extrapolation of the log trajectory
+        last_sdc_xy = sdc_transf_traj_xy[:, -1, :]
+        last_sdc_yaw = sdc_transf_traj_yaw[:, -1]
+        last_sdc_heading = jnp.stack((jnp.cos(last_sdc_yaw), jnp.sin(last_sdc_yaw)), axis=-1)
+
+        extra_heading = radius_point_extra(last_sdc_xy, last_sdc_heading, jnp.zeros_like(last_sdc_xy), radius)
+
+        current_sdc_heading = jnp.where(idx_radius_point == 0, extra_heading, inter_heading)
+        
+        # assert(jnp.any(current_sdc_heading != jnp.zeros((2,)), axis=-1))
+        
+        current_sdc_heading = current_sdc_heading / jnp.linalg.norm(current_sdc_heading)
+
+        return current_sdc_heading
+    
+    return jax.vmap(proxy_heading, (0, None))(state, radius)
 
 def extract_roadgraph(state, obs):
     valid_roadmap_point = obs.roadgraph_static_points.valid[..., None]
