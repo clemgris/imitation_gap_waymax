@@ -151,10 +151,10 @@ def tf_examples_dataset(
   )
   if should_cache:
     dataset = dataset.cache()
-  dataset = dataset.repeat(repeat)
   if shuffle_seed is not None:
     local_seed = jax.random.PRNGKey(shuffle_seed)[0]
     dataset = dataset.shuffle(shuffle_buffer_size, seed=local_seed)
+  dataset = dataset.repeat(repeat)
   if not batch_by_scenario:
     dataset = dataset.unbatch()
   if batch_dims:
