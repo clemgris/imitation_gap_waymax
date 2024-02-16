@@ -9,7 +9,7 @@ from waymax import config as _config
 from waymax import dataloader
 from rnnbc import make_train
 
-from utils.dataloader import tf_examples_dataset
+from utils.dataloader import tf_examples_dataset, filter_funct
 # Desable preallocation for jax and tensorflow
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -64,7 +64,8 @@ config = {
     'min_mean_speed': None,
     'num_files': 100,
     'training_path': '/data/draco/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
-    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150'
+    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
+    'should_cache': True,
     }
 
 # Ckeckpoint path
@@ -92,7 +93,7 @@ WOD_1_1_0_TRAINING = _config.DatasetConfig(
     batch_dims = (config['num_envs'],),
     max_num_objects=config['max_num_obj'],
     include_sdc_paths=config['include_sdc_paths'],
-    repeat=1
+    repeat=None,
 )
 
 # Data iter config
@@ -122,7 +123,8 @@ train_dataset = tf_examples_dataset(
     tf_data_service_address=WOD_1_1_0_TRAINING.tf_data_service_address,
     batch_by_scenario=WOD_1_1_0_TRAINING.batch_by_scenario,
     filter_function=None,
-    num_files = config['num_files']
+    num_files = config['num_files'],
+    should_cache = config['should_cache'],
 )
 
 data = train_dataset.as_numpy_iterator().next() # DEBUG
