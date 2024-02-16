@@ -79,7 +79,8 @@ def tf_examples_dataset(
     tf_data_service_address: Optional[str] = None,
     batch_by_scenario: bool = True,
     filter_function: Callable[[dict[str, tf.Tensor]], bool] = lambda x: x,
-    num_files: int=None
+    num_files: int=None,
+    should_cache: bool = True,
 ) -> tf.data.Dataset:
   """Returns a dataset of Open Motion dataset TFExamples.
 
@@ -126,10 +127,6 @@ def tf_examples_dataset(
   # Truncate the dataset
   if num_files:
     files_to_load = files_to_load[:num_files]
-  # Suffle
-  if shuffle_seed:
-    random.seed(shuffle_seed)
-    random.shuffle(files_to_load)
   files = tf.data.Dataset.from_tensor_slices(files_to_load)
   # Split files across multiple processes for distributed training/eval.
   files = files.shard(jax.process_count(), jax.process_index())
@@ -137,43 +134,14 @@ def tf_examples_dataset(
   def _make_dataset(
       shard_index: int, num_shards: int, local_files: tf.data.Dataset
   ):
-    # Outer parallelism.
     local_files = local_files.shard(num_shards, shard_index)
-    ds = local_files.interleave(
-        dataset_fn,
-        num_parallel_calls=AUTOTUNE,
-        cycle_length=AUTOTUNE,
-        deterministic=deterministic,
-    )
-    # Repeat
-    ds = ds.repeat(repeat)
-    # Suffle
-    if shuffle_seed is not None:
-      # Makes sure each host uses a different RNG for shuffling.
-      local_seed = jax.random.fold_in(
-          jax.random.PRNGKey(shuffle_seed), jax.process_index()
-      )[0]
-      ds = ds.shuffle(shuffle_buffer_size, seed=local_seed)
-    # Preprocess
+    ds = dataset_fn(local_files)
     ds = ds.map(
         preprocess_fn, num_parallel_calls=AUTOTUNE, deterministic=deterministic
     )
-    # Filter
     if filter_function:
       ds = ds.filter(filter_function)
-    # Batch
-    if not batch_by_scenario:
-      ds = ds.unbatch()
-    if batch_dims:
-      for batch_size in reversed(batch_dims):
-        ds = ds.batch(
-            batch_size,
-            drop_remainder=drop_remainder,
-            num_parallel_calls=AUTOTUNE,
-            deterministic=deterministic,
-        )
     return ds
-
   make_dataset_fn = functools.partial(
       _make_dataset, num_shards=num_shards, local_files=files
   )
@@ -181,6 +149,22 @@ def tf_examples_dataset(
   dataset = indices.interleave(
       make_dataset_fn, num_parallel_calls=AUTOTUNE, deterministic=deterministic
   )
+  if should_cache:
+    dataset = dataset.cache()
+  dataset = dataset.repeat(repeat)
+  if shuffle_seed is not None:
+    local_seed = jax.random.PRNGKey(shuffle_seed)[0]
+    dataset = dataset.shuffle(shuffle_buffer_size, seed=local_seed)
+  if not batch_by_scenario:
+    dataset = dataset.unbatch()
+  if batch_dims:
+    for batch_size in reversed(batch_dims):
+      dataset = dataset.batch(
+          batch_size,
+          drop_remainder=drop_remainder,
+          num_parallel_calls=AUTOTUNE,
+          deterministic=deterministic,
+      )
 
   if tf_data_service_address is not None:
     dataset = dataset.apply(
