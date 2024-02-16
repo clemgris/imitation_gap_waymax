@@ -1,22 +1,22 @@
+import dataclasses
 from flax.training.train_state import TrainState
 import functools
 import jax
 import jax.numpy as jnp
 from jax import random
 
-import time
-
 import os
 import optax
 import pickle
 from tqdm import tqdm, trange
-
 from typing import NamedTuple
-from waymax import dynamics
+import time
+
+from waymax import agents
 from waymax import dataloader
 from waymax import datatypes
+from waymax import dynamics
 from waymax import env as _env
-from waymax import agents
 
 import sys
 sys.path.append('./')
@@ -25,6 +25,7 @@ from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
 from feature_extractor import KeyExtractor
 from state_preprocessing import ExtractObs
 from rnn_policy import ActorCriticRNN, ScannedRNN
+from obs_mask.mask import SpeedConicObsMask
 
 
 class Transition(NamedTuple):
@@ -37,6 +38,9 @@ extractors = {
 }
 feature_extractors = {
     'KeyExtractor': KeyExtractor
+}
+obs_masks = {
+    'SpeedConicObsMask': SpeedConicObsMask
 }
 
 class make_train:
@@ -107,6 +111,16 @@ class make_train:
         self.extractor = extractors[self.config['extractor']](self.config)
         self.feature_extractor = feature_extractors[self.config['feature_extractor']]
         self.feature_extractor_kwargs = self.config['feature_extractor_kwargs']
+        
+        # DEFINE OBSERVABILITY MASK
+        if 'obs_mask' not in self.config.keys():
+            self.config['obs_mask'] = None
+            
+        if self.config['obs_mask']:
+            self.obs_mask = obs_masks[self.config['obs_mask']]
+            self.obs_mask_kwargs = self.config['obs_mask_kwargs']
+        else:
+            self.obs_mask = None
 
     # SCHEDULER
     def linear_schedule(self, count):
@@ -149,7 +163,28 @@ class make_train:
         def _log_step(current_state, unused):
 
             done = current_state.is_done
-            obsv = self.extractor(current_state)
+            # Extract obs in SDC referential
+            obs = datatypes.sdc_observation_from_state(current_state,
+                                                        roadgraph_top_k=self.config['roadgraph_top_k'])
+            
+            # Mask
+            if self.obs_mask is not None:
+                _, sdc_idx = jax.lax.top_k(current_state.object_metadata.is_sdc, k=1)
+                sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
+
+                obs_mask = self.obs_mask(**self.obs_mask_kwargs,
+                                            sdc_v=sdc_v.squeeze())
+                
+                # Set to unvalid the masked objects
+                visible_obj = obs_mask.mask_fun(obs.trajectory.x,
+                                                obs.trajectory.y) 
+                trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                         valid=visible_obj)
+                obs = dataclasses.replace(obs,
+                                          trajectory=trajectory_limited)
+                
+            # Extract the features from the observation
+            obsv = self.extractor(current_state, obs)
             
             transition = Transition(done,
                                     None,
@@ -174,16 +209,37 @@ class make_train:
                 def _env_step(current_state, unused):
                     
                     done = jnp.tile(current_state.is_done, (self.config['num_envs'],))
-                    obsv = self.extractor(current_state)
-
-                    expert_action = self.expert_agent.select_action(state=current_state, params=None, rng=None, actor_state=None)
                     
-                    # Add a mask here
+                    # Extract obs in SDC referential
+                    obs = datatypes.sdc_observation_from_state(current_state,
+                                                               roadgraph_top_k=self.config['roadgraph_top_k'])
 
+                    expert_action = self.expert_agent.select_action(state=current_state, 
+                                                                    params=None, 
+                                                                    rng=None, 
+                                                                    actor_state=None)
+                    
+                    # Mask
+                    if self.obs_mask is not None:
+                        _, sdc_idx = jax.lax.top_k(current_state.object_metadata.is_sdc, k=1)
+                        sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
+
+                        obs_mask = self.obs_mask(**self.obs_mask_kwargs,
+                                                 sdc_v=sdc_v.squeeze())
+                        
+                        # Set to unvalid the masked objects
+                        visible_obj = obs_mask.mask_fun(obs.trajectory.x,
+                                                        obs.trajectory.y) 
+                        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                                 valid=visible_obj)
+                        obs = dataclasses.replace(obs,
+                                                  trajectory=trajectory_limited)
+                        
+                    # Extract the features from the observation
+                    obsv = self.extractor(current_state, obs)
                     transition = Transition(done,
                                             expert_action,
-                                            obsv
-                                            )
+                                            obsv)
                     
                     # Update the simulator state with the log trajectory
                     current_state = datatypes.update_state_by_log(current_state, num_steps=1)
@@ -281,9 +337,29 @@ class make_train:
                     current_state, rnn_state = cary
                     
                     done = jnp.tile(current_state.is_done, (self.config['num_envs_eval'],))
-                    obsv = self.extractor(current_state)
                     
-                    # Add a mask here
+                    # Extract obs in SDC referential
+                    obs = datatypes.sdc_observation_from_state(current_state,
+                                                               roadgraph_top_k=self.config['roadgraph_top_k'])
+                    
+                    # Mask
+                    if self.obs_mask is not None:
+                        _, sdc_idx = jax.lax.top_k(current_state.object_metadata.is_sdc, k=1)
+                        sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
+
+                        obs_mask = self.obs_mask(**self.obs_mask_kwargs,
+                                                 sdc_v=sdc_v.squeeze())
+                        
+                        # Set to unvalid the masked objects
+                        visible_obj = obs_mask.mask_fun(obs.trajectory.x,
+                                                        obs.trajectory.y) 
+                        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                                 valid=visible_obj)
+                        obs = dataclasses.replace(obs,
+                                                  trajectory=trajectory_limited)
+                        
+                    # Extract the features from the observation
+                    obsv = self.extractor(current_state, obs)
                     
                     rnn_state, data_action, _ = network.apply(train_state.params,rnn_state,(jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                     action = datatypes.Action(data=data_action[0], 

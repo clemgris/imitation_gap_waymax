@@ -51,6 +51,12 @@ config = {
     'num_envs_eval': 16,
     "num_epochs": 500,
     'num_steps': 80,
+    'obs_mask': 'SpeedConicObsMask',
+    'obs_mask_kwargs': {
+        'radius': 20, # 100, # Sanity check (as full obs)
+        'angle_min': jnp.pi / 8, # 2 * jnp.pi, # Sanity check (as full obs)
+        'v_max': 15, # 15,
+        },
     'roadgraph_top_k': 2000,
     'shuffle_seed': 123,
     'shuffle_buffer_size': 1000, # 1000

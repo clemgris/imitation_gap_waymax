@@ -5,22 +5,46 @@ import jax.numpy as jnp
 from typing import Any, Dict
 
 from model.config import UNVALID_MASK_VALUE
-from model.utils import combine_two_object_pose_2d, radius_point_extra
+from model.model_utils import combine_two_object_pose_2d, radius_point_extra
 from waymax import datatypes
 from waymax.datatypes import transform_trajectory
 
 from utils.observation import last_sdc_observation_for_current_sdc_from_state
 
-
 def extract_xy(state, obs):
+    """Extract the xy positions of the object of the scene.
+    Mask the unvalid objects with a default value (UNVALID_MASK_VALUE).
+
+    Args:
+        state: The current simulator state (unused).
+        obs: The current observation of the SDC in its local 
+        referential.
+
+    Returns:
+        Masked xy positions (trajectory of size 1) of the 
+        objects in the scene.
+    """
     traj = obs.trajectory.xy
 
     valid = obs.trajectory.valid[..., None]
-    masked_traj = jnp.where(valid, traj, UNVALID_MASK_VALUE * jnp.ones_like(traj))
+    masked_traj = jnp.where(valid, traj, 
+                            UNVALID_MASK_VALUE * jnp.ones_like(traj))
     
     return masked_traj
 
 def extract_goal(state, obs):
+    """Generates the proxy goal as the last 
+    xy positin of the SDC in the log trajectory.
+
+    Args:
+        state: The current simulator state.
+        obs: The current observation of the SDC in its local referential (unused).
+
+    Returns:
+        Proxy goal of shape (..., 2). Note that the proxy 
+        goal coordinates are in the referential of the current
+        SDC position.
+    """
     _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
 
     last_sdc_obs = last_sdc_observation_for_current_sdc_from_state(state) # Last obs of the log in the current SDC pos referential
@@ -113,6 +137,17 @@ def extract_heading(state, obs, radius=20):
     return jax.vmap(proxy_heading, (0, None))(state, radius)
 
 def extract_roadgraph(state, obs):
+    """Extract the features (xy, dir_xy, type) of the roadgraph 
+    points. Mask the unvalid objects with a default value (UNVALID_MASK_VALUE).
+
+    Args:
+        state: The current simulator state (unused).
+        obs: The current observation of the SDC in its local 
+        referential.
+
+    Returns:
+        Masked roadgraph points features (trajectory of size 1).
+    """
     valid_roadmap_point = obs.roadgraph_static_points.valid[..., None]
 
     roadmap_point = obs.roadgraph_static_points.xy
@@ -129,6 +164,18 @@ def extract_roadgraph(state, obs):
     return roadmap_point_features
 
 def extract_trafficlights(state, obs):
+    """Extract the features (xy positions, type) of the traffic 
+    lights present in the scene. Mask the unvalid objects with
+    a default value (UNVALID_MASK_VALUE).
+
+    Args:
+        state: The current simulator state (unused).
+        obs: The current observation of the SDC in its local 
+        referential.
+
+    Returns:
+        Masked traffic lights features (trajectory of size 1).
+    """
     traffic_lights = obs.traffic_lights.xy
     valid = obs.traffic_lights.valid[..., None]
     masked_traffic_lights = jnp.where(valid, traffic_lights, UNVALID_MASK_VALUE * jnp.ones_like(traffic_lights))
@@ -166,10 +213,9 @@ class Extractor(ABC):
 class ExtractObs(Extractor):
     config: Dict
 
-    def __call__(self, state):
+    def __call__(self, state, obs):
         obs_features = {}
-        obs = datatypes.sdc_observation_from_state(state,
-                                                   roadgraph_top_k=self.config['roadgraph_top_k'])
+        
         for key in self.config['feature_extractor_kwargs']['keys']:
             obs_feature = EXTRACTOR_DICT[key](state, obs)
             B = obs_feature.shape[0]
