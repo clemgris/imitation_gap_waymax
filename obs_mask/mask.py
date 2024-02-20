@@ -1,10 +1,18 @@
 from abc import ABC, abstractmethod
+import dataclasses
 from dataclasses import dataclass
+import jax
 import jax.numpy as jnp
 from typing import Any
 
+from model.model_utils import linear_clip_scale
+
 
 class ObsMask(ABC):
+    
+    @abstractmethod
+    def mask_obs(self, *args: Any, **kwds: Any) -> Any:
+        pass
 
     @abstractmethod
     def mask_fun(self, *args: Any, **kwds: Any) -> Any:
@@ -17,7 +25,16 @@ class ObsMask(ABC):
 @dataclass
 class DistanceObsMask(ObsMask):
     radius: float
-
+    
+    def mask_obs(self, state, obs, rng):
+        visible_obj = self.mask_fun(obs.trajectory.x,
+                                             obs.trajectory.y) 
+        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                 valid=visible_obj)
+        limited_obs = dataclasses.replace(obs,
+                                       trajectory=trajectory_limited)
+        return limited_obs
+                 
     def mask_fun(self, obj_x, obj_y, eps=1e-3):
         is_center = (-eps <= obj_x) & (obj_x <= eps) & \
             (-eps <= obj_y) & (obj_y <= eps)
@@ -38,6 +55,15 @@ class DistanceObsMask(ObsMask):
 class ConicObsMask(ObsMask):
     radius: float
     angle: float
+    
+    def mask_obs(self, state, obs, rng):
+        visible_obj = self.mask_fun(obs.trajectory.x,
+                                             obs.trajectory.y) 
+        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                 valid=visible_obj)
+        limited_obs = dataclasses.replace(obs,
+                                       trajectory=trajectory_limited)
+        return limited_obs
 
     def mask_fun(self, obj_x, obj_y, eps=1e-3):
         is_center = (-eps <= obj_x) & (obj_x <= eps) & \
@@ -74,6 +100,15 @@ class ConicObsMask(ObsMask):
 class BlindSpotObsMask(ObsMask):
     radius: float
     angle: float
+    
+    def mask_obs(self, state, obs, rng):
+        visible_obj = self.mask_fun(obs.trajectory.x,
+                                             obs.trajectory.y)
+        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                 valid=visible_obj)
+        limited_obs = dataclasses.replace(obs,
+                                       trajectory=trajectory_limited)
+        return limited_obs
 
     def mask_fun(self, obj_x, obj_y, eps=1e-3):
         assert(self.angle <= jnp.pi / 2)
@@ -130,11 +165,24 @@ class SpeedConicObsMask(ObsMask):
     radius: float
     angle_min: float
     v_max: float
-    sdc_v: float
-
-    def mask_fun(self, obj_x, obj_y, eps=1e-3):
+    
+    def mask_obs(self, state, obs, rng):
+        _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
+        sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
+                        
+        visible_obj = self.mask_fun(obs.trajectory.x,
+                                    obs.trajectory.y,
+                                    sdc_v.squeeze())
         
-        angle = - self.sdc_v.clip(0, self.v_max) * (2 * jnp.pi - self.angle_min) / self.v_max + 2 * jnp.pi
+        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                 valid=visible_obj)
+        limited_obs = dataclasses.replace(obs,
+                                          trajectory=trajectory_limited)
+        return limited_obs
+
+    def mask_fun(self, obj_x, obj_y, sdc_v, eps=1e-3):
+        
+        angle = - sdc_v.clip(0, self.v_max) * (2 * jnp.pi - self.angle_min) / self.v_max + 2 * jnp.pi
 
         return ConicObsMask(self.radius, angle).mask_fun(obj_x, obj_y, eps=eps)
     
@@ -142,3 +190,40 @@ class SpeedConicObsMask(ObsMask):
         angle = - self.sdc_v.clip(0, self.v_max) * (2 * jnp.pi - self.angle_min) / self.v_max + 2 * jnp.pi
 
         ConicObsMask(self.radius, angle).plot_mask_fun(ax, center=center, color=color)
+        
+@dataclass
+class SpeedGaussianNoise(ObsMask):
+    v_max: float
+    sigma_max: float
+    
+    def mask_obs(self, state, obs, rng):
+        noisy_xy = self.mask_fun(state, obs, rng)
+        
+        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                 x=noisy_xy[..., 0],
+                                                 y=noisy_xy[..., 1])
+        obs_limited = dataclasses.replace(obs,
+                                          trajectory=trajectory_limited)
+        return obs_limited
+
+    def mask_fun(self, state, obs, rng):
+        
+        traj = obs.trajectory.xy
+        
+        _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
+        sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
+
+        xy = obs.trajectory.xy
+        is_obj = 1 - state.object_metadata.is_sdc
+        sigma = jnp.where(is_obj[:, None, ..., None, None],
+                          linear_clip_scale(sdc_v, self.v_max, self.sigma_max)[..., None] * jnp.ones_like(xy),
+                          jnp.zeros_like(xy))
+                
+        gaussian_noise = jax.random.normal(jax.random.PRNGKey(rng), xy.shape) * sigma
+        
+        noisy_xy = traj + gaussian_noise
+
+        return noisy_xy
+    
+    def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
+        pass

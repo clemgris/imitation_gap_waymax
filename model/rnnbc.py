@@ -25,7 +25,7 @@ from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
 from feature_extractor import KeyExtractor
 from state_preprocessing import ExtractObs
 from rnn_policy import ActorCriticRNN, ScannedRNN
-from obs_mask.mask import SpeedConicObsMask
+from obs_mask.mask import SpeedConicObsMask, SpeedGaussianNoise
 
 
 class Transition(NamedTuple):
@@ -40,6 +40,7 @@ feature_extractors = {
     'KeyExtractor': KeyExtractor
 }
 obs_masks = {
+    'SpeedGaussianNoise': SpeedGaussianNoise,
     'SpeedConicObsMask': SpeedConicObsMask
 }
 
@@ -117,14 +118,18 @@ class make_train:
             self.config['obs_mask'] = None
             
         if self.config['obs_mask']:
-            self.obs_mask = obs_masks[self.config['obs_mask']]
-            self.obs_mask_kwargs = self.config['obs_mask_kwargs']
+            self.obs_mask = obs_masks[self.config['obs_mask']](**self.config['obs_mask_kwargs'])
         else:
             self.obs_mask = None
 
     # SCHEDULER
     def linear_schedule(self, count):
-        frac = (1.0 - (count // (self.config["num_envs"] * N_TRAINING))) # TODO: add the number of epochs
+        n_update_per_epoch = N_TRAINING // self.config["num_envs"]
+        n_epoch = count // n_update_per_epoch
+        if n_epoch < 20:
+            frac = 1 
+        else:
+            frac = 1 / (2**n_epoch)
         return self.config["lr"] * frac
 
     def train(self,):
@@ -160,28 +165,18 @@ class make_train:
         init_rnn_state_eval = ScannedRNN.initialize_carry((self.config["num_envs_eval"], feature_extractor_shape))
 
         # UPDATE THE SIMULATOR FROM THE LOG
-        def _log_step(current_state, unused):
+        def _log_step(cary, unused):
+            
+            current_state, rng = cary
 
             done = current_state.is_done
             # Extract obs in SDC referential
             obs = datatypes.sdc_observation_from_state(current_state,
-                                                        roadgraph_top_k=self.config['roadgraph_top_k'])
+                                                       roadgraph_top_k=self.config['roadgraph_top_k'])
             
             # Mask
             if self.obs_mask is not None:
-                _, sdc_idx = jax.lax.top_k(current_state.object_metadata.is_sdc, k=1)
-                sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
-
-                obs_mask = self.obs_mask(**self.obs_mask_kwargs,
-                                            sdc_v=sdc_v.squeeze())
-                
-                # Set to unvalid the masked objects
-                visible_obj = obs_mask.mask_fun(obs.trajectory.x,
-                                                obs.trajectory.y) 
-                trajectory_limited = dataclasses.replace(obs.trajectory,
-                                                         valid=visible_obj)
-                obs = dataclasses.replace(obs,
-                                          trajectory=trajectory_limited)
+                obs = self.obs_mask.mask_obs(current_state, obs, rng)
                 
             # Extract the features from the observation
             obsv = self.extractor(current_state, obs)
@@ -193,20 +188,23 @@ class make_train:
 
             # Update the simulator with the log trajectory
             current_state = datatypes.update_state_by_log(current_state, num_steps=1)
-
-            return current_state, transition
+            rng = jax.random.split(random.PRNGKey(rng), num=1)[0, 0]
+            
+            return (current_state, rng), transition
 
         # TRAIN LOOP
         def _update_epoch(train_state):
 
             # UPDATE NETWORK
-            def _update_scenario(train_state, scenario):
+            def _update_scenario(train_state, scenario, rng):
 
                 # INIT ENV
                 current_state = self.env.reset(scenario)               
 
                 # COLLECT TRAJECTORIES FROM scenario
-                def _env_step(current_state, unused):
+                def _env_step(cary, unused):
+                    
+                    current_state, rng = cary
                     
                     done = jnp.tile(current_state.is_done, (self.config['num_envs'],))
                     
@@ -221,19 +219,7 @@ class make_train:
                     
                     # Mask
                     if self.obs_mask is not None:
-                        _, sdc_idx = jax.lax.top_k(current_state.object_metadata.is_sdc, k=1)
-                        sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
-
-                        obs_mask = self.obs_mask(**self.obs_mask_kwargs,
-                                                 sdc_v=sdc_v.squeeze())
-                        
-                        # Set to unvalid the masked objects
-                        visible_obj = obs_mask.mask_fun(obs.trajectory.x,
-                                                        obs.trajectory.y) 
-                        trajectory_limited = dataclasses.replace(obs.trajectory,
-                                                                 valid=visible_obj)
-                        obs = dataclasses.replace(obs,
-                                                  trajectory=trajectory_limited)
+                        obs = self.obs_mask.mask_obs(current_state, obs, rng)
                         
                     # Extract the features from the observation
                     obsv = self.extractor(current_state, obs)
@@ -243,15 +229,16 @@ class make_train:
                     
                     # Update the simulator state with the log trajectory
                     current_state = datatypes.update_state_by_log(current_state, num_steps=1)
-
-                    return current_state, transition
+                    rng = jax.random.split(random.PRNGKey(rng), num=1)[0, 0]
+                    
+                    return (current_state, rng), transition
                 
                 # Compute the rnn_state on first self.env.config.init_steps from the log trajectory 
-                _, log_traj_batch = jax.lax.scan(_log_step, scenario, None, self.env.config.init_steps - 1) 
+                (_, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1) 
 
                 # Use jax.lax.scan with the modified _env_step function
-                _, traj_batch = jax.lax.scan(_env_step, current_state, None, self.config["num_steps"])
-
+                (_, rng), traj_batch = jax.lax.scan(_env_step, (current_state, rng), None, self.config["num_steps"])
+                
                 # BACKPROPAGATION ON THE SCENARIO
                 def _update(train_state, log_traj_batch, traj_batch):
 
@@ -304,7 +291,7 @@ class make_train:
                     # Scenario does not contain the SDC 
                     pass
                 else:
-                    train_state, loss = jit_update_scenario(train_state, scenario)
+                    train_state, loss = jit_update_scenario(train_state, scenario, self.key)
                     losses.append(loss)
             metric['loss'].append(jnp.array(losses).mean())
             
@@ -318,10 +305,10 @@ class make_train:
         def _evaluate_epoch(train_state):
             
             # EVAL NETWORK
-            def _eval_scenario(train_state, scenario):
+            def _eval_scenario(train_state, scenario, rng):
                 
                 # Compute the rnn_state on first self.env.config.init_steps from the log trajectory 
-                _, log_traj_batch = jax.lax.scan(_log_step, scenario, None, self.env.config.init_steps - 1) 
+                (_, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1) 
                 rnn_state, _, _ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
 
                 current_state = self.env.reset(scenario)
@@ -334,7 +321,7 @@ class make_train:
 
                 def _eval_step(cary, unused):
 
-                    current_state, rnn_state = cary
+                    current_state, rnn_state, rng = cary
                     
                     done = jnp.tile(current_state.is_done, (self.config['num_envs_eval'],))
                     
@@ -344,34 +331,23 @@ class make_train:
                     
                     # Mask
                     if self.obs_mask is not None:
-                        _, sdc_idx = jax.lax.top_k(current_state.object_metadata.is_sdc, k=1)
-                        sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
-
-                        obs_mask = self.obs_mask(**self.obs_mask_kwargs,
-                                                 sdc_v=sdc_v.squeeze())
-                        
-                        # Set to unvalid the masked objects
-                        visible_obj = obs_mask.mask_fun(obs.trajectory.x,
-                                                        obs.trajectory.y) 
-                        trajectory_limited = dataclasses.replace(obs.trajectory,
-                                                                 valid=visible_obj)
-                        obs = dataclasses.replace(obs,
-                                                  trajectory=trajectory_limited)
+                        obs = self.obs_mask.mask_obs(current_state, obs, rng)
                         
                     # Extract the features from the observation
                     obsv = self.extractor(current_state, obs)
                     
-                    rnn_state, data_action, _ = network.apply(train_state.params,rnn_state,(jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
+                    rnn_state, data_action, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                     action = datatypes.Action(data=data_action[0], 
                                               valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
 
                     current_state = self.env.step(current_state, action)
+                    rng = jax.random.split(random.PRNGKey(rng), num=1)[0, 0]
                     
                     metric = self.env.metrics(current_state)
 
-                    return (current_state, rnn_state), metric
+                    return (current_state, rnn_state, rng), metric
 
-                _, scenario_metrics = jax.lax.scan(_eval_step, (current_state, rnn_state), None, TRAJ_LENGTH - self.env.config.init_steps)
+                _, scenario_metrics = jax.lax.scan(_eval_step, (current_state, rnn_state, rng), None, TRAJ_LENGTH - self.env.config.init_steps)
 
                 return scenario_metrics
             
@@ -388,11 +364,12 @@ class make_train:
                     # Scenario does not contain the SDC 
                     pass
                 else:
-                    scenario_metrics = jit_eval_scenario(train_state, scenario)
+                    scenario_metrics = jit_eval_scenario(train_state, scenario, self.key)
                     for key, value in scenario_metrics.items():
                         if jnp.any(value.valid):
                             all_metrics[key].append(value.value[value.valid].mean())
-
+                self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
+                
             return train_state, all_metrics    
         
         metrics = {}
