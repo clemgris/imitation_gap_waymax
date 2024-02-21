@@ -21,7 +21,7 @@ from waymax import env as _env
 import sys
 sys.path.append('./')
 
-from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
+from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH, N_FILES
 from feature_extractor import KeyExtractor
 from state_preprocessing import ExtractObs
 from rnn_policy import ActorCriticRNN, ScannedRNN
@@ -124,7 +124,7 @@ class make_train:
 
     # SCHEDULER
     def linear_schedule(self, count):
-        n_update_per_epoch = N_TRAINING // self.config["num_envs"]
+        n_update_per_epoch = (N_TRAINING * self.config['num_files'] / N_FILES) // self.config["num_envs"]
         n_epoch = count // n_update_per_epoch
         if n_epoch < 20:
             frac = 1 
@@ -283,7 +283,9 @@ class make_train:
             jit_update_scenario = jax.jit(_update_scenario)
             jit_postprocess_fn = jax.jit(self._post_process)
 
-            for data in tqdm(self.train_dataset.as_numpy_iterator(), desc='Training', total=N_TRAINING // self.config['num_envs']): 
+            tt = 0
+            for data in tqdm(self.train_dataset.as_numpy_iterator(), desc='Training', total=N_TRAINING // self.config['num_envs']):
+                tt += 1
             # for _ in trange(1000) # DEBUG:
             #     data = self.data
                 scenario = jit_postprocess_fn(data)
@@ -293,11 +295,14 @@ class make_train:
                 else:
                     train_state, loss = jit_update_scenario(train_state, scenario, self.key)
                     losses.append(loss)
+                    
+                if tt > (N_TRAINING * self.config['num_files'] / N_FILES) // self.config['num_envs']:
+                    break
             metric['loss'].append(jnp.array(losses).mean())
             
-            # SUFFLE TRAINING DATA ITERATOR
-            self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
-            self.train_dataset.shuffle(self.config['shuffle_buffer_size'], self.key)
+            # # SUFFLE TRAINING DATA ITERATOR
+            # self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
+            # self.train_dataset.shuffle(self.config['shuffle_buffer_size'], self.key)
 
             return train_state, metric
         

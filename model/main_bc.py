@@ -13,6 +13,7 @@ from utils.dataloader import tf_examples_dataset
 # Desable preallocation for jax and tensorflow
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 import tensorflow as tf
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -43,20 +44,27 @@ config = {
     'freq_save': 10,
     'include_sdc_paths': False,
     'key': 42,
-    'lr': 3e-4,
+    'lr': 1e-4,
     "max_grad_norm": 0.5,
     'max_num_obj': 8,
     'max_num_rg_points': 20000,
     'num_envs': 16,
     'num_envs_eval': 16,
-    "num_epochs": 500,
+    "num_epochs": 200,
     'num_steps': 80,
-    'obs_mask': 'SpeedConicObsMask',
-    'obs_mask_kwargs': {
-        'radius': 20, # 100, # Sanity check (as full obs)
-        'angle_min': jnp.pi / 8, # 2 * jnp.pi, # Sanity check (as full obs)
-        'v_max': 15, # 15,
+    'obs_mask': 'SpeedGaussianNoise', #'SpeedConicObsMask',
+    'obs_mask_kwargs':
+        
+        {
+        'v_max': 15,
+        'sigma_max':5
         },
+        
+        # {
+        # 'radius': 100, # Sanity check (as full obs)
+        # 'angle_min': 2 * jnp.pi, # Sanity check (as full obs)
+        # 'v_max': 15, # 15,
+        # },
     'roadgraph_top_k': 2000,
     'shuffle_seed': 123,
     'shuffle_buffer_size': 1000, # 1000
@@ -64,8 +72,19 @@ config = {
     'min_mean_speed': None,
     'num_files': 100,
     'training_path': '/data/draco/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
-    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150'
+    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
+    'should_cache': True
     }
+
+# for radius in [20, 40, 60, 80, 100]:
+#     for angle_min in [jnp.pi / 8, jnp.pi / 4, jnp.pi / 2, jnp.pi, jnp.pi * 2]:
+        
+# config['obs_mask_kwargs']['radius'] = radius
+# config['obs_mask_kwargs']['angle_min'] = angle_min
+
+# for sigma_max in [0,1,3,5]:
+#     
+    # config['obs_mask_kwargs']['sigma_max'] = sigma_max
 
 # Ckeckpoint path
 current_time = datetime.now() 
@@ -92,7 +111,7 @@ WOD_1_1_0_TRAINING = _config.DatasetConfig(
     batch_dims = (config['num_envs'],),
     max_num_objects=config['max_num_obj'],
     include_sdc_paths=config['include_sdc_paths'],
-    repeat=1
+    repeat=None
 )
 
 # Data iter config
@@ -122,7 +141,8 @@ train_dataset = tf_examples_dataset(
     tf_data_service_address=WOD_1_1_0_TRAINING.tf_data_service_address,
     batch_by_scenario=WOD_1_1_0_TRAINING.batch_by_scenario,
     filter_function=None,
-    num_files = config['num_files']
+    num_files = config['num_files'],
+    should_cache = config['should_cache']
 )
 
 data = train_dataset.as_numpy_iterator().next() # DEBUG
@@ -153,11 +173,12 @@ env_config = _config.EnvironmentConfig(
 # TRAINING
 ##
 training = make_train(config,
-                      env_config,
-                      train_dataset,
-                      val_dataset,
-                      data # DEBUG
-                      )
+                    env_config,
+                    train_dataset,
+                    val_dataset,
+                    data # DEBUG
+                    )
 
 # with jax.disable_jit(): # DEBUG
 training_dict = training.train()
+    

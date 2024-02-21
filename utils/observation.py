@@ -5,7 +5,6 @@ from typing import Any
 
 from waymax import datatypes
 
-
 def last_log_obs_from_state(state: datatypes.simulator_state.SimulatorState,
                             obs_num_steps: int = 1,
                             num_obj: int = 1,

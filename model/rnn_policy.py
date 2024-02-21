@@ -47,7 +47,6 @@ class ActorCriticRNN(nn.Module):
 
         # State feature extractor
         state_features = self.feature_extractor_class(**self.feature_extractor_kwargs)(obs)
-
         # RNN
         rnn_in = (state_features, dones)
         new_rnn_state, x = ScannedRNN()(rnn_state, rnn_in)

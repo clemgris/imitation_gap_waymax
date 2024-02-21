@@ -1,6 +1,8 @@
 
 # Contants to monitor the training
 
+N_FILES = 1000
+
 N_TRAINING = 487002
 N_VALIDATION = 44097
 
