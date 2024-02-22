@@ -24,11 +24,12 @@ def extract_xy(state, obs):
         Masked xy positions (trajectory of size 1) of the 
         objects in the scene.
     """
-    traj = obs.trajectory.xy
+    xy = obs.trajectory.xy
 
     valid = obs.trajectory.valid[..., None]
-    masked_traj = jnp.where(valid, traj, 
-                            UNVALID_MASK_VALUE * jnp.ones_like(traj))
+    masked_traj = jnp.where(valid, 
+                            xy, 
+                            UNVALID_MASK_VALUE * jnp.ones_like(xy))
     
     return masked_traj
 
