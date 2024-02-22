@@ -208,7 +208,7 @@ class SpeedGaussianNoise(ObsMask):
 
     def mask_fun(self, state, obs, rng):
         
-        traj = obs.trajectory.xy
+        xy = obs.trajectory.xy
         
         _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
         sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
@@ -218,10 +218,50 @@ class SpeedGaussianNoise(ObsMask):
         sigma = jnp.where(is_obj[:, None, ..., None, None],
                           linear_clip_scale(sdc_v, self.v_max, self.sigma_max)[..., None] * jnp.ones_like(xy),
                           jnp.zeros_like(xy))
-                
+        
         gaussian_noise = jax.random.normal(jax.random.PRNGKey(rng), xy.shape) * sigma
         
-        noisy_xy = traj + gaussian_noise
+        noisy_xy = xy + gaussian_noise
+
+        return noisy_xy
+    
+    def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
+        pass
+    
+@dataclass
+class SpeedUniformNoise(ObsMask):
+    v_max: float
+    bound_max: float
+    
+    def mask_obs(self, state, obs, rng):
+        noisy_xy = self.mask_fun(state, obs, rng)
+        
+        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                 x=noisy_xy[..., 0],
+                                                 y=noisy_xy[..., 1])
+        obs_limited = dataclasses.replace(obs,
+                                          trajectory=trajectory_limited)
+        return obs_limited
+
+    def mask_fun(self, state, obs, rng):
+        
+        xy = obs.trajectory.xy
+        
+        _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
+        sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
+
+        xy = obs.trajectory.xy
+        is_obj = 1 - state.object_metadata.is_sdc
+        bound = jnp.where(is_obj[:, None, ..., None, None],
+                          linear_clip_scale(sdc_v, self.v_max, self.bound_max)[..., None] * jnp.ones_like(xy),
+                          jnp.zeros_like(xy))
+        
+        uniform_noise = jax.random.uniform(jax.random.PRNGKey(rng), 
+                                          minval=-bound, 
+                                          maxval=bound, 
+                                          shape=xy.shape)
+        
+        noisy_xy = xy + uniform_noise
 
         return noisy_xy
     
