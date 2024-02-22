@@ -25,7 +25,7 @@ from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH, N_FILES
 from feature_extractor import KeyExtractor
 from state_preprocessing import ExtractObs
 from rnn_policy import ActorCriticRNN, ScannedRNN
-from obs_mask.mask import SpeedConicObsMask, SpeedGaussianNoise
+from obs_mask.mask import SpeedConicObsMask, SpeedGaussianNoise, SpeedUniformNoise
 
 
 class Transition(NamedTuple):
@@ -41,6 +41,7 @@ feature_extractors = {
 }
 obs_masks = {
     'SpeedGaussianNoise': SpeedGaussianNoise,
+    'SpeedUniformNoise': SpeedUniformNoise,
     'SpeedConicObsMask': SpeedConicObsMask
 }
 
@@ -125,11 +126,8 @@ class make_train:
     # SCHEDULER
     def linear_schedule(self, count):
         n_update_per_epoch = (N_TRAINING * self.config['num_files'] / N_FILES) // self.config["num_envs"]
-        n_epoch = count // n_update_per_epoch
-        if n_epoch < 20:
-            frac = 1 
-        else:
-            frac = 1 / (2**n_epoch)
+        n_epoch = jnp.array([count // n_update_per_epoch])
+        frac = jnp.where(n_epoch <= 20, 1, 1 / (2**(n_epoch - 20)))
         return self.config["lr"] * frac
 
     def train(self,):
@@ -146,7 +144,7 @@ class make_train:
         
         network_params = network.init(random.PRNGKey(self.key), init_rnn_state_train, init_x)
         
-        if self.config["anneal_lr"]:
+        if self.config["lr_scheduler"]:
             tx = optax.chain(
                 optax.clip_by_global_norm(self.config["max_grad_norm"]),
                 optax.adam(learning_rate=self.linear_schedule, eps=1e-5),
@@ -173,14 +171,14 @@ class make_train:
             # Extract obs in SDC referential
             obs = datatypes.sdc_observation_from_state(current_state,
                                                        roadgraph_top_k=self.config['roadgraph_top_k'])
-            
+        
             # Mask
             if self.obs_mask is not None:
                 obs = self.obs_mask.mask_obs(current_state, obs, rng)
                 
             # Extract the features from the observation
             obsv = self.extractor(current_state, obs)
-            
+        
             transition = Transition(done,
                                     None,
                                     obsv
@@ -193,7 +191,7 @@ class make_train:
             return (current_state, rng), transition
 
         # TRAIN LOOP
-        def _update_epoch(train_state):
+        def _update_epoch(train_state, rng):
 
             # UPDATE NETWORK
             def _update_scenario(train_state, scenario, rng):
@@ -211,7 +209,8 @@ class make_train:
                     # Extract obs in SDC referential
                     obs = datatypes.sdc_observation_from_state(current_state,
                                                                roadgraph_top_k=self.config['roadgraph_top_k'])
-
+                    
+                
                     expert_action = self.expert_agent.select_action(state=current_state, 
                                                                     params=None, 
                                                                     rng=None, 
@@ -220,9 +219,11 @@ class make_train:
                     # Mask
                     if self.obs_mask is not None:
                         obs = self.obs_mask.mask_obs(current_state, obs, rng)
+
                         
                     # Extract the features from the observation
                     obsv = self.extractor(current_state, obs)
+                
                     transition = Transition(done,
                                             expert_action,
                                             obsv)
@@ -293,7 +294,8 @@ class make_train:
                     # Scenario does not contain the SDC 
                     pass
                 else:
-                    train_state, loss = jit_update_scenario(train_state, scenario, self.key)
+                    train_state, loss = jit_update_scenario(train_state, scenario, rng)
+                    rng = jax.random.split(random.PRNGKey(rng), num=1)[0, 0]
                     losses.append(loss)
                     
                 if tt > (N_TRAINING * self.config['num_files'] / N_FILES) // self.config['num_envs']:
@@ -307,7 +309,7 @@ class make_train:
             return train_state, metric
         
         # EVALUATION LOOP
-        def _evaluate_epoch(train_state):
+        def _evaluate_epoch(train_state, rng):
             
             # EVAL NETWORK
             def _eval_scenario(train_state, scenario, rng):
@@ -369,11 +371,12 @@ class make_train:
                     # Scenario does not contain the SDC 
                     pass
                 else:
-                    scenario_metrics = jit_eval_scenario(train_state, scenario, self.key)
+                    scenario_metrics = jit_eval_scenario(train_state, scenario, rng)
+                    # Reset key
+                    rng = jax.random.split(random.PRNGKey(rng), num=1)[0, 0]
                     for key, value in scenario_metrics.items():
                         if jnp.any(value.valid):
                             all_metrics[key].append(value.value[value.valid].mean())
-                self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
                 
             return train_state, all_metrics    
         
@@ -381,7 +384,9 @@ class make_train:
         for epoch in range(self.config["num_epochs"]):
             metrics[epoch] = {}
             # Training
-            train_state, train_metric = _update_epoch(train_state)
+            train_state, train_metric = _update_epoch(train_state, self.key)
+            # Reset key
+            self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
             metrics[epoch]['train'] = train_metric
 
             train_message = f"Epoch | {epoch} | Train | loss | {jnp.array(train_metric['loss']).mean():.4f}"
@@ -389,7 +394,9 @@ class make_train:
 
             # Validation
             if (epoch % self.config['freq_eval'] == 0) or (epoch == self.config['num_epochs'] - 1):
-                _, val_metric = _evaluate_epoch(train_state)
+                _, val_metric = _evaluate_epoch(train_state, self.key)
+                # Reset key
+                self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
                 metrics[epoch]['validation'] = val_metric
 
                 val_message = f'Epoch | {epoch} | Val | '
