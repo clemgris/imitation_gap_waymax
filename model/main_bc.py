@@ -9,6 +9,8 @@ from waymax import config as _config
 from waymax import dataloader
 from rnnbc import make_train
 
+from dataset.config import HEADING_RADIUS
+
 from utils.dataloader import tf_examples_dataset
 # Desable preallocation for jax and tensorflow
 import os
@@ -28,7 +30,6 @@ if gpus:
 
 # Training config
 config = {
-    'anneal_lr': False,
     'bins': 128,
     'discrete': False,
     'dynamics': 'delta',
@@ -37,28 +38,30 @@ config = {
     'feature_extractor_kwargs': {'final_hidden_layers': 128,
                                 #  'hidden_layers': {'roadgraph_map': 8},
                                  'keys': ['xy',
-                                          'proxy_goal',
+                                        #   'proxy_goal',
+                                        'heading',
                                         #   'roadgraph_map'
                                           ]},
     'freq_eval': 10,
     'freq_save': 10,
     'include_sdc_paths': False,
     'key': 42,
-    'lr': 1e-4,
+    'lr': 3e-4,
+    'lr_scheduler': False,
     "max_grad_norm": 0.5,
     'max_num_obj': 8,
     'max_num_rg_points': 20000,
     'num_envs': 16,
     'num_envs_eval': 16,
-    "num_epochs": 200,
+    "num_epochs": 500,
     'num_steps': 80,
-    'obs_mask': 'SpeedGaussianNoise', #'SpeedConicObsMask',
-    'obs_mask_kwargs':
+    'obs_mask': None, # 'SpeedGaussianNoise', #'SpeedConicObsMask',
+    'obs_mask_kwargs': None,
         
-        {
-        'v_max': 15,
-        'sigma_max':5
-        },
+        # {
+        # 'v_max': 15,
+        # 'sigma_max':5
+        # },
         
         # {
         # 'radius': 100, # Sanity check (as full obs)
@@ -71,8 +74,8 @@ config = {
     'total_timesteps': 100,
     'min_mean_speed': None,
     'num_files': 100,
-    'training_path': '/data/draco/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
-    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
+    'training_path': '/data/saruman/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
+    'validation_path': '/data/saruman/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
     'should_cache': True
     }
 
@@ -94,7 +97,9 @@ log_folder = f"logs/{date_string}"
 os.makedirs(log_folder, exist_ok='True')
 
 config['log_folder'] = log_folder
-
+if 'heading' in config['feature_extractor_kwargs']['keys']:
+    config['HEADING_RADIUS'] = HEADING_RADIUS
+    
 # Save training config
 training_args = config
 
@@ -179,6 +184,6 @@ training = make_train(config,
                     data # DEBUG
                     )
 
-# with jax.disable_jit(): # DEBUG
-training_dict = training.train()
+with jax.disable_jit(): # DEBUG
+    training_dict = training.train()
     
