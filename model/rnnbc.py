@@ -171,14 +171,14 @@ class make_train:
             # Extract obs in SDC referential
             obs = datatypes.sdc_observation_from_state(current_state,
                                                        roadgraph_top_k=self.config['roadgraph_top_k'])
-        
+            
             # Mask
             if self.obs_mask is not None:
                 obs = self.obs_mask.mask_obs(current_state, obs, rng)
                 
             # Extract the features from the observation
             obsv = self.extractor(current_state, obs)
-        
+            
             transition = Transition(done,
                                     None,
                                     obsv
@@ -194,23 +194,19 @@ class make_train:
         def _update_epoch(train_state, rng):
 
             # UPDATE NETWORK
-            def _update_scenario(train_state, scenario, rng):
-
-                # INIT ENV
-                current_state = self.env.reset(scenario)               
+            def _update_scenario(train_state, scenario, rng):         
 
                 # COLLECT TRAJECTORIES FROM scenario
                 def _env_step(cary, unused):
                     
                     current_state, rng = cary
                     
-                    done = jnp.tile(current_state.is_done, (self.config['num_envs'],))
+                    done = current_state.is_done
                     
                     # Extract obs in SDC referential
                     obs = datatypes.sdc_observation_from_state(current_state,
                                                                roadgraph_top_k=self.config['roadgraph_top_k'])
-                    
-                
+
                     expert_action = self.expert_agent.select_action(state=current_state, 
                                                                     params=None, 
                                                                     rng=None, 
@@ -219,23 +215,22 @@ class make_train:
                     # Mask
                     if self.obs_mask is not None:
                         obs = self.obs_mask.mask_obs(current_state, obs, rng)
-
                         
                     # Extract the features from the observation
                     obsv = self.extractor(current_state, obs)
-                
                     transition = Transition(done,
                                             expert_action,
                                             obsv)
                     
                     # Update the simulator state with the log trajectory
                     current_state = datatypes.update_state_by_log(current_state, num_steps=1)
+                
                     rng = jax.random.split(random.PRNGKey(rng), num=1)[0, 0]
                     
                     return (current_state, rng), transition
                 
                 # Compute the rnn_state on first self.env.config.init_steps from the log trajectory 
-                (_, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1) 
+                (current_state, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1) 
 
                 # Use jax.lax.scan with the modified _env_step function
                 (_, rng), traj_batch = jax.lax.scan(_env_step, (current_state, rng), None, self.config["num_steps"])
@@ -315,10 +310,8 @@ class make_train:
             def _eval_scenario(train_state, scenario, rng):
                 
                 # Compute the rnn_state on first self.env.config.init_steps from the log trajectory 
-                (_, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1) 
+                (current_state, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1) 
                 rnn_state, _, _ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
-
-                current_state = self.env.reset(scenario)
 
                 def extand(x):
                     if isinstance(x, jnp.ndarray):
@@ -330,12 +323,11 @@ class make_train:
 
                     current_state, rnn_state, rng = cary
                     
-                    done = jnp.tile(current_state.is_done, (self.config['num_envs_eval'],))
+                    done = current_state.is_done
                     
                     # Extract obs in SDC referential
                     obs = datatypes.sdc_observation_from_state(current_state,
                                                                roadgraph_top_k=self.config['roadgraph_top_k'])
-                    
                     # Mask
                     if self.obs_mask is not None:
                         obs = self.obs_mask.mask_obs(current_state, obs, rng)
@@ -346,8 +338,18 @@ class make_train:
                     rnn_state, data_action, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                     action = datatypes.Action(data=data_action[0], 
                                               valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
-
+                    
+                    # Patch bug in waymax (squeeze timestep dimension when using reset --> need squeezed timestep for update)
+                    current_timestep = current_state['timestep']
+                    # Squeeze timestep dim
+                    current_state = dataclasses.replace(current_state,
+                                                        timestep=current_timestep[0])
+                    
                     current_state = self.env.step(current_state, action)
+
+                    # Unsqueeze timestep dim
+                    current_state = dataclasses.replace(current_state,
+                                                        timestep=current_timestep + 1)
                     rng = jax.random.split(random.PRNGKey(rng), num=1)[0, 0]
                     
                     metric = self.env.metrics(current_state)
@@ -385,19 +387,18 @@ class make_train:
             metrics[epoch] = {}
             # Training
             train_state, train_metric = _update_epoch(train_state, self.key)
+            metrics[epoch]['train'] = train_metric
             # Reset key
             self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
-            metrics[epoch]['train'] = train_metric
-
             train_message = f"Epoch | {epoch} | Train | loss | {jnp.array(train_metric['loss']).mean():.4f}"
             print(train_message)
 
             # Validation
             if (epoch % self.config['freq_eval'] == 0) or (epoch == self.config['num_epochs'] - 1):
                 _, val_metric = _evaluate_epoch(train_state, self.key)
+                metrics[epoch]['validation'] = val_metric
                 # Reset key
                 self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
-                metrics[epoch]['validation'] = val_metric
 
                 val_message = f'Epoch | {epoch} | Val | '
                 for key, value in val_metric.items():
