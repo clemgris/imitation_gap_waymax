@@ -9,6 +9,8 @@ from model.model_utils import combine_two_object_pose_2d, radius_point_extra
 from waymax import datatypes
 from waymax.datatypes import transform_trajectory
 
+from dataset.config import HEADING_RADIUS
+
 from utils.observation import last_sdc_observation_for_current_sdc_from_state
 
 def extract_xy(state, obs):
@@ -56,7 +58,7 @@ def extract_goal(state, obs):
 
     return proxy_goal
 
-def extract_heading(state, obs, radius=20):
+def extract_heading(state, obs, radius=HEADING_RADIUS):
     """Generates the heading for the SDC to move towards 
     the log position radius meters away from its 
     current position.
@@ -70,8 +72,8 @@ def extract_heading(state, obs, radius=20):
         the coordinate system of the current SDC position.
     """
     def proxy_heading(state: datatypes.simulator_state.SimulatorState,
-                    radius: float
-                    ) -> jnp.ndarray:
+                      radius: float
+                      ) -> jnp.ndarray:
         _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1) 
 
         obj_xy = state.current_sim_trajectory.xy[..., 0, :]
@@ -134,7 +136,7 @@ def extract_heading(state, obs, radius=20):
         current_sdc_heading = current_sdc_heading / jnp.linalg.norm(current_sdc_heading)
 
         return current_sdc_heading
-    
+    state
     return jax.vmap(proxy_heading, (0, None))(state, radius)
 
 def extract_roadgraph(state, obs):
@@ -190,12 +192,14 @@ def extract_trafficlights(state, obs):
 
 EXTRACTOR_DICT = {'xy': extract_xy,
                   'proxy_goal': extract_goal,
+                  'heading': extract_heading,
                   'roadgraph_map': extract_roadgraph,
                   'traffic_lights': extract_trafficlights}
 
 def init_dict(config):
     return {'xy': jnp.zeros((1, config["num_envs"], config['max_num_obj'], 2)),
             'proxy_goal': jnp.zeros((1, config["num_envs"], 2)),
+            'heading': jnp.zeros((1, config["num_envs"], 2)),
             'roadgraph_map': jnp.zeros((1, config["num_envs"], config['roadgraph_top_k'], 24)),
             'traffic_lights': jnp.zeros((1, config["num_envs"], 16, 11))
             }
