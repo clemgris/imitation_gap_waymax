@@ -115,9 +115,10 @@ class IdentityEncoder(nn.Module):
         return x
 
 FEATURES_EXTRACTOR_DICT = {'xy': IdentityEncoder,
-                  'proxy_goal': IdentityEncoder,
-                  'roadgraph_map': PolylineEncoder,
-                  'traffic_lights': IdentityEncoder}
+                        'proxy_goal': IdentityEncoder,
+                        'heading': IdentityEncoder,
+                        'roadgraph_map': PolylineEncoder,
+                        'traffic_lights': IdentityEncoder}
 
 class KeyExtractor(nn.Module):
     final_hidden_layers: int
