@@ -108,7 +108,6 @@ def extract_heading(state, obs, radius=HEADING_RADIUS):
 
         sdc_transf_traj_xy = jnp.take_along_axis(transf_traj.xy, sdc_idx[..., None, None], axis=0)
         sdc_transf_traj_yaw = jnp.take_along_axis(transf_traj.yaw, sdc_idx[..., None], axis=0)
-        sdc_transf_traj_yaw = jnp.take_along_axis(transf_traj.yaw, sdc_idx[..., None], axis=0)
 
         # Compute dist to the current SDC pos
         dist_matrix = jnp.linalg.norm(sdc_transf_traj_xy, axis=-1)
@@ -117,7 +116,7 @@ def extract_heading(state, obs, radius=HEADING_RADIUS):
                             dist_matrix)
 
         # Intersection btw the circle and log trajectory
-        _, idx_radius_point = jax.lax.top_k(dist_matrix > radius, k=1)
+        _, idx_radius_point = jax.lax.top_k(dist_matrix >= radius, k=1)
         radius_point = jnp.take_along_axis(sdc_transf_traj_xy, idx_radius_point[..., None], axis=-2)
         
         inter_heading =  radius_point / jnp.linalg.norm(radius_point, axis=-1)
@@ -136,7 +135,7 @@ def extract_heading(state, obs, radius=HEADING_RADIUS):
         current_sdc_heading = current_sdc_heading / jnp.linalg.norm(current_sdc_heading)
 
         return current_sdc_heading
-    state
+
     return jax.vmap(proxy_heading, (0, None))(state, radius)
 
 def extract_roadgraph(state, obs):
