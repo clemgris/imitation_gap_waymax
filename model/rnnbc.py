@@ -25,7 +25,7 @@ from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH, N_FILES
 from feature_extractor import KeyExtractor
 from state_preprocessing import ExtractObs
 from rnn_policy import ActorCriticRNN, ScannedRNN
-from obs_mask.mask import SpeedConicObsMask, SpeedGaussianNoise, SpeedUniformNoise
+from obs_mask.mask import SpeedConicObsMask, SpeedGaussianNoise, SpeedUniformNoise, ZeroMask
 
 
 class Transition(NamedTuple):
@@ -40,6 +40,7 @@ feature_extractors = {
     'KeyExtractor': KeyExtractor
 }
 obs_masks = {
+    'ZeroMask': ZeroMask,
     'SpeedGaussianNoise': SpeedGaussianNoise,
     'SpeedUniformNoise': SpeedUniformNoise,
     'SpeedConicObsMask': SpeedConicObsMask
@@ -218,6 +219,7 @@ class make_train:
                         
                     # Extract the features from the observation
                     obsv = self.extractor(current_state, obs)
+                    
                     transition = Transition(done,
                                             expert_action,
                                             obsv)
@@ -252,7 +254,6 @@ class make_train:
                     #     return total_loss, (entropy)
                     
                     def _loss_fn(params, init_rnn_state, log_traj_batch, traj_batch): # CONTINUOUS ACTION SPACE
-                        
                         # Compute the rnn_state from the log on the first steps
                         rnn_state, _, _ = network.apply(params, init_rnn_state, (log_traj_batch.obs, log_traj_batch.done))
                         # Compute the action for the rest of the trajectory
@@ -295,12 +296,12 @@ class make_train:
                     
                 if tt > (N_TRAINING * self.config['num_files'] / N_FILES) // self.config['num_envs']:
                     break
+                    
             metric['loss'].append(jnp.array(losses).mean())
             
             # # SUFFLE TRAINING DATA ITERATOR
             # self.key = jax.random.split(random.PRNGKey(self.key), num=1)[0, 0]
             # self.train_dataset.shuffle(self.config['shuffle_buffer_size'], self.key)
-
             return train_state, metric
         
         # EVALUATION LOOP
