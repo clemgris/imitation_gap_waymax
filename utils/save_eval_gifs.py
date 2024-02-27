@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import jax
 import jax.numpy as jnp
@@ -38,6 +39,7 @@ from dataset.config import N_TRAINING, N_VALIDATION, TRAJ_LENGTH
 from model.feature_extractor import KeyExtractor
 from model.state_preprocessing import ExtractObs
 from model.rnn_policy import ActorCriticRNN, ScannedRNN
+from obs_mask.mask import SpeedConicObsMask, SpeedGaussianNoise, SpeedUniformNoise
 
 from viz import plot_observation_with_goal
 
@@ -51,6 +53,11 @@ extractors = {
 }
 feature_extractors = {
     'KeyExtractor': KeyExtractor
+}
+obs_masks = {
+    'SpeedGaussianNoise': SpeedGaussianNoise,
+    'SpeedUniformNoise': SpeedUniformNoise,
+    'SpeedConicObsMask': SpeedConicObsMask
 }
 
 
@@ -128,7 +135,15 @@ class save_eval:
         self.extractor = extractors[self.config['extractor']](self.config)
         self.feature_extractor = feature_extractors[self.config['feature_extractor']]
         self.feature_extractor_kwargs = self.config['feature_extractor_kwargs']
-
+        
+        # DEFINE OBSERVABILITY MASK
+        if 'obs_mask' not in self.config.keys():
+            self.config['obs_mask'] = None
+            
+        if self.config['obs_mask']:
+            self.obs_mask = obs_masks[self.config['obs_mask']](**self.config['obs_mask_kwargs'])
+        else:
+            self.obs_mask = None
     # SCHEDULER
     def linear_schedule(self, count):
         frac = (1.0 - (count // (self.config["num_envs"] * self.config['n_train_per_epoch'])))
@@ -148,7 +163,7 @@ class save_eval:
         
         # network_params = network.init(random.PRNGKey(self.key), init_rnn_state_train, init_x)
         
-        if self.config["anneal_lr"]:
+        if self.config["lr_scheduler"]:
             tx = optax.chain(
                 optax.clip_by_global_norm(self.config["max_grad_norm"]),
                 optax.adam(learning_rate=self.linear_schedule, eps=1e-5),
@@ -167,10 +182,21 @@ class save_eval:
         init_rnn_state_eval = ScannedRNN.initialize_carry((self.config["num_envs_eval"], feature_extractor_shape))
 
         # UPDATE THE SIMULATOR FROM THE LOG
-        def _log_step(current_state, unused):
+        def _log_step(cary, unused):
+            
+            current_state, rng = cary
 
             done = current_state.is_done
-            obsv = self.extractor(current_state)
+            # Extract obs in SDC referential
+            obs = datatypes.sdc_observation_from_state(current_state,
+                                                       roadgraph_top_k=self.config['roadgraph_top_k'])
+            
+            # Mask
+            if self.obs_mask is not None:
+                obs = self.obs_mask.mask_obs(current_state, obs, rng)
+                
+            # Extract the features from the observation
+            obsv = self.extractor(current_state, obs)
             
             transition = Transition(done,
                                     None,
@@ -179,20 +205,19 @@ class save_eval:
 
             # Update the simulator with the log trajectory
             current_state = datatypes.update_state_by_log(current_state, num_steps=1)
-
-            return current_state, transition
+            rng = jax.random.split(jax.random.PRNGKey(rng), num=1)[0, 0]
+            
+            return (current_state, rng), transition
         
         # EVALUATION LOOP
         def _evaluate_epoch(train_state):
             
             # EVAL NETWORK
-            def _eval_scenario(train_state, scenario):
+            def _eval_scenario(train_state, scenario, rng):
                 
                 # Compute the rnn_state on first self.env.config.init_steps from the log trajectory 
-                _, log_traj_batch = jax.lax.scan(_log_step, scenario, None, self.env.config.init_steps - 1) 
+                (current_state, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1) 
                 rnn_state, _, _ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
-
-                current_state = self.env.reset(scenario)
 
                 def extand(x):
                     if isinstance(x, jnp.ndarray):
@@ -202,30 +227,48 @@ class save_eval:
 
                 def _eval_step(cary, unused):
 
-                    current_state, rnn_state = cary
+                    current_state, rnn_state, rng = cary
                     
-                    done = jnp.tile(current_state.is_done, (self.config['num_envs_eval'],))
-                    obsv = self.extractor(current_state)
+                    done = current_state.is_done
                     
-                    # Add a mask here
+                    # Extract obs in SDC referential
+                    obs = datatypes.sdc_observation_from_state(current_state,
+                                                               roadgraph_top_k=self.config['roadgraph_top_k'])
+                    # Mask
+                    if self.obs_mask is not None:
+                        obs = self.obs_mask.mask_obs(current_state, obs, rng)
+                        
+                    # Extract the features from the observation
+                    obsv = self.extractor(current_state, obs)
                     
                     rnn_state, data_action, _ = network.apply(train_state.params,rnn_state,(jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                     action = datatypes.Action(data=data_action[0], 
                                               valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
                     
                     sdc_obs = datatypes.sdc_observation_from_state(current_state,
-                                                roadgraph_top_k=20000)
+                                                                   roadgraph_top_k=20000)
                     reduced_sdc_obs = jax.tree_map(lambda x : x[0, ...], sdc_obs) # Unbatch
                     
                     img = plot_observation_with_goal(reduced_sdc_obs,
                                                     obj_idx=0,
                                                     goal=obsv['proxy_goal'][0])
 
+                    # Patch bug in waymax (squeeze timestep dimension when using reset --> need squeezed timestep for update)
+                    current_timestep = current_state['timestep']
+                    # Squeeze timestep dim
+                    current_state = dataclasses.replace(current_state,
+                                                        timestep=current_timestep[0])
+                    
                     current_state = self.env.step(current_state, action)
+
+                    # Unsqueeze timestep dim
+                    current_state = dataclasses.replace(current_state,
+                                                        timestep=current_timestep + 1)
+                    rng = jax.random.split(jax.random.PRNGKey(rng), num=1)[0, 0]
                     
                     metric = self.env.metrics(current_state)
 
-                    return (current_state, rnn_state), (img, metric)
+                    return (current_state, rnn_state, rng), (img, metric)
 
                 imgs = []
                 metrics = {'log_divergence': [],
@@ -233,7 +276,7 @@ class save_eval:
                             'offroad': []}
                 
                 for _ in range(TRAJ_LENGTH - self.env.config.init_steps):
-                    (current_state, rnn_state), (img, metric) = _eval_step((current_state, rnn_state), None)
+                    (current_state, rnn_state, rng), (img, metric) = _eval_step((current_state, rnn_state, rng), None)
                     imgs.append(img)
                     for key, value in metric.items():
                         if value.valid:
@@ -253,8 +296,10 @@ class save_eval:
                     # Scenario does not contain the SDC 
                     pass
                 else:
-                    imgs, metrics = _eval_scenario(train_state, scenario)
-
+                    imgs, metrics = _eval_scenario(train_state, scenario, self.key)
+                    # Reset key
+                    self.key = jax.random.split(jax.random.PRNGKey(self.key), num=1)[0, 0]
+                    
                     # Save gif 
                     frames = [Image.fromarray(img) for img in imgs]
                     frames[0].save(os.path.join(self.save_path, f'ex_{tt}_{int(config["IDM"])}.gif'),
@@ -291,7 +336,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Training config
-    load_folder = '/data/draco/cleain/imitation_gap_waymax/logs'
+    load_folder = '/data/saruman/cleain/imitation_gap_waymax/logs'
     expe_id = args.expe_id
 
     with open(os.path.join(load_folder, expe_id, 'args.json'), 'r') as file:
@@ -349,7 +394,7 @@ if __name__ == "__main__":
     with open(os.path.join(load_folder, expe_id, f'params_{n_epochs}.pkl'), 'rb') as file:
         params = pickle.load(file)
 
-    save_path = os.path.join('/data/draco/cleain/imitation_gap_waymax/animation', expe_id)
+    save_path = os.path.join('/data/saruman/cleain/imitation_gap_waymax/animation', expe_id)
     os.makedirs(save_path, exist_ok=True)
 
     with open(os.path.join(save_path, 'args.json'), 'w') as json_file:
