@@ -163,6 +163,7 @@ class BlindSpotObsMask(ObsMask):
 @dataclass
 class SpeedConicObsMask(ObsMask):
     radius: float
+    angle_max: float
     angle_min: float
     v_max: float
     
@@ -182,12 +183,12 @@ class SpeedConicObsMask(ObsMask):
 
     def mask_fun(self, obj_x, obj_y, sdc_v, eps=1e-3):
         
-        angle = - sdc_v.clip(0, self.v_max) * (2 * jnp.pi - self.angle_min) / self.v_max + 2 * jnp.pi
+        angle = sdc_v.clip(0, self.v_max) * (self.angle_min - self.angle_max) / self.v_max + self.angle_max
 
         return ConicObsMask(self.radius, angle).mask_fun(obj_x, obj_y, eps=eps)
     
     def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
-        angle = - self.sdc_v.clip(0, self.v_max) * (2 * jnp.pi - self.angle_min) / self.v_max + 2 * jnp.pi
+        angle = self.sdc_v.clip(0, self.v_max) * (self.angle_min - self.angle_max) / self.v_max + self.angle_max
 
         ConicObsMask(self.radius, angle).plot_mask_fun(ax, center=center, color=color)
         
@@ -195,6 +196,7 @@ class SpeedConicObsMask(ObsMask):
 class SpeedGaussianNoise(ObsMask):
     v_max: float
     sigma_max: float
+    sigma_min: float
     
     def mask_obs(self, state, obs, rng):
         noisy_xy = self.mask_fun(state, obs, rng)
@@ -216,7 +218,7 @@ class SpeedGaussianNoise(ObsMask):
         xy = obs.trajectory.xy
         is_obj = 1 - state.object_metadata.is_sdc
         sigma = jnp.where(is_obj[:, None, ..., None, None],
-                          linear_clip_scale(sdc_v, self.v_max, self.sigma_max)[..., None] * jnp.ones_like(xy),
+                          linear_clip_scale(sdc_v, self.v_max, self.sigma_min, self.sigma_max)[..., None] * jnp.ones_like(xy),
                           jnp.zeros_like(xy))
         
         gaussian_noise = jax.random.normal(jax.random.PRNGKey(rng), xy.shape) * sigma
@@ -232,6 +234,7 @@ class SpeedGaussianNoise(ObsMask):
 class SpeedUniformNoise(ObsMask):
     v_max: float
     bound_max: float
+    bound_min: float
     
     def mask_obs(self, state, obs, rng):
         noisy_xy = self.mask_fun(state, obs, rng)
@@ -245,15 +248,13 @@ class SpeedUniformNoise(ObsMask):
 
     def mask_fun(self, state, obs, rng):
         
-        xy = obs.trajectory.xy
-        
         _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
         sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
 
         xy = obs.trajectory.xy
         is_obj = 1 - state.object_metadata.is_sdc
         bound = jnp.where(is_obj[:, None, ..., None, None],
-                          linear_clip_scale(sdc_v, self.v_max, self.bound_max)[..., None] * jnp.ones_like(xy),
+                          linear_clip_scale(sdc_v, self.v_max, self.bound_min, self.bound_max)[..., None] * jnp.ones_like(xy),
                           jnp.zeros_like(xy))
         
         uniform_noise = jax.random.uniform(jax.random.PRNGKey(rng), 
@@ -264,6 +265,29 @@ class SpeedUniformNoise(ObsMask):
         noisy_xy = xy + uniform_noise
 
         return noisy_xy
+    
+    def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
+        pass
+    
+    
+@dataclass
+class ZeroMask(ObsMask):
+    
+    def mask_obs(self, state, obs, rng):
+        zero_xy = self.mask_fun(state, obs, rng)
+        
+        trajectory_limited = dataclasses.replace(obs.trajectory,
+                                                 x=zero_xy[..., 0],
+                                                 y=zero_xy[..., 1])
+        obs_limited = dataclasses.replace(obs,
+                                          trajectory=trajectory_limited)
+        return obs_limited
+
+    def mask_fun(self, state, obs, rng):
+        
+        xy = obs.trajectory.xy
+
+        return jnp.zeros_like(xy)
     
     def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
         pass

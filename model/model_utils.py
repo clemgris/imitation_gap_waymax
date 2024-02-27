@@ -68,5 +68,5 @@ def radius_point_extra(line_point, line_dir, circle_center, circle_radius):
       return intersection
   return jax.vmap(circle_semi_line_intersection, (0, 0, 0, None))(line_point, line_dir, circle_center, circle_radius)
 
-def linear_clip_scale(v, v_max, max_value):
-    return v.clip(0, v_max) * (max_value / v_max)
+def linear_clip_scale(v, v_max, min_value, max_value):
+    return v.clip(0, v_max) * ((max_value - min_value) / v_max) + min_value
