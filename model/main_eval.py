@@ -34,7 +34,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Training config
-    load_folder = '/data/draco/cleain/imitation_gap_waymax/logs'
+    load_folder = '/data/saruman/cleain/imitation_gap_waymax/logs'
     expe_num = args.expe_id
 
     with open(os.path.join(load_folder, expe_num, 'args.json'), 'r') as file:
