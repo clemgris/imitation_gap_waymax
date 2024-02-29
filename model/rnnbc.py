@@ -135,6 +135,8 @@ class make_train:
         
         # INIT NETWORK
         network = ActorCriticRNN(self.dynamics_model.action_spec().shape[0],
+                                 self.dynamics_model.action_spec().minimum,
+                                 self.dynamics_model.action_spec().maximum,
                                  feature_extractor_class=self.feature_extractor ,
                                  feature_extractor_kwargs=self.feature_extractor_kwargs)
         
@@ -257,13 +259,12 @@ class make_train:
                         # Compute the rnn_state from the log on the first steps
                         rnn_state, _, _ = network.apply(params, init_rnn_state, (log_traj_batch.obs, log_traj_batch.done))
                         # Compute the action for the rest of the trajectory
-                        _, action_values, _ = network.apply(params, rnn_state, (traj_batch.obs, traj_batch.done))
-
-                        # Compute the MSE loss
-                        expert_action = traj_batch.expert_action.action.data
-                        mse_loss = jnp.mean((action_values - expert_action) ** 2)
-
-                        return mse_loss
+                        _, action_dist, _ = network.apply(params, rnn_state, (traj_batch.obs, traj_batch.done))
+                        
+                        log_prob = action_dist.log_prob(traj_batch.expert_action.action.data)
+                        total_loss = - log_prob.mean()
+                        
+                        return total_loss
 
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=False) # has_aux=True for discrete action
                     total_loss, grads = grad_fn(train_state.params, init_rnn_state_train, log_traj_batch, traj_batch)
@@ -336,8 +337,9 @@ class make_train:
                     # Extract the features from the observation
                     obsv = self.extractor(current_state, obs)
                     
-                    rnn_state, data_action, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
-                    action = datatypes.Action(data=data_action[0], 
+                    rnn_state, action_dist, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
+                    action_data = action_dist.sample(seed=random.PRNGKey(rng)).squeeze(0)
+                    action = datatypes.Action(data=action_data, 
                                               valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
                     
                     # Patch bug in waymax (squeeze timestep dimension when using reset --> need squeezed timestep for update)

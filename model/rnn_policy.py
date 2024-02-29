@@ -1,8 +1,12 @@
+import distrax
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from typing import Dict, Optional, Union
+from tensorflow_probability.substrates import jax as tfp
+
+tfd = tfp.distributions
 
 import flax.linen as nn
 from flax.linen.initializers import constant, orthogonal
@@ -37,6 +41,8 @@ class ScannedRNN(nn.Module):
 
 class ActorCriticRNN(nn.Module):
     action_dim: int
+    action_minimum: jnp.ndarray
+    action_maximum: jnp.ndarray
     feature_extractor_class: nn.Module
     feature_extractor_kwargs: Optional[Union[Dict, None]]
 
@@ -55,7 +61,14 @@ class ActorCriticRNN(nn.Module):
         x_actor = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x)
         x_actor = jax.nn.relu(x_actor)
         actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        actor_std = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        actor_std = nn.softplus(actor_std)
+        
         # pi = distrax.Categorical(logits=actor_mean) # DISCRET ACTION SPACE
+        pi = tfd.TruncatedNormal(loc=actor_mean, 
+                                scale=actor_std,
+                                low=self.action_minimum,
+                                high=self.action_maximum)
         
         # Critic
         x_critic = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x)
@@ -63,4 +76,4 @@ class ActorCriticRNN(nn.Module):
         critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x_critic)
 
         # return new_rnn_state, pi, jnp.squeeze(critic, axis=-1) # DISCRETE ACTION SPACE
-        return new_rnn_state, actor_mean, jnp.squeeze(critic, axis=-1) # CONTINUOUS ACTION SPACE
+        return new_rnn_state, pi, jnp.squeeze(critic, axis=-1) # CONTINUOUS ACTION SPACE
