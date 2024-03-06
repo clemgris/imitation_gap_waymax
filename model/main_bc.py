@@ -15,7 +15,7 @@ from utils.dataloader import tf_examples_dataset
 # Desable preallocation for jax and tensorflow
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
 
 import tensorflow as tf
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -36,12 +36,17 @@ config = {
     'extractor': 'ExtractObs',
     'feature_extractor': 'KeyExtractor',
     'feature_extractor_kwargs': {'final_hidden_layers': 128,
-                                #  'hidden_layers': {'roadgraph_map': 8},
-                                 'keys': ['xy',
-                                        #   'proxy_goal',
-                                        'heading',
-                                        #   'roadgraph_map'
-                                          ]},
+                                 'hidden_layers': {'roadgraph_map': 8},
+                                 'keys': [
+                                    'xy',
+                                    'proxy_goal',
+                                    # 'heading',
+                                    # 'roadgraph_map'
+                                        ],
+                                 'kwargs': {
+                                    #  'heading': {'radius': 10}
+                                     }
+                                 },
     'freq_eval': 10,
     'freq_save': 10,
     'include_sdc_paths': False,
@@ -49,23 +54,30 @@ config = {
     'lr': 3e-4,
     'lr_scheduler': False,
     "max_grad_norm": 0.5,
-    'max_num_obj': 8,
+    'max_num_obj': 32,
     'max_num_rg_points': 20000,
-    'num_envs': 16,
+    'num_envs': 512,
     'num_envs_eval': 16,
-    "num_epochs": 500,
+    "num_epochs": 150,
     'num_steps': 80,
-    'obs_mask': None, # 'SpeedGaussianNoise', #'SpeedConicObsMask',
+    'obs_mask': None, #'SpeedConicObsMask', #'ZeroMask', #'SpeedGaussianNoise', #'SpeedUniformNoise', #'SpeedConicObsMask',
     'obs_mask_kwargs': None,
-        
-        # {
+        # {},
+
+        # { # Uniform noise
         # 'v_max': 15,
-        # 'sigma_max':5
+        # 'bound_max': 5
         # },
-        
+
+        # { # Gaussian noise
+        # 'v_max': 1,
+        # 'sigma_max':0
+        # },
+
         # {
-        # 'radius': 100, # Sanity check (as full obs)
-        # 'angle_min': 2 * jnp.pi, # Sanity check (as full obs)
+        # 'radius': 25, # Sanity check (as full obs)
+        # 'angle_max': 2/3 * jnp.pi,
+        # 'angle_min': 1/8 * jnp.pi, # Sanity check (as full obs)
         # 'v_max': 15, # 15,
         # },
     'roadgraph_top_k': 2000,
@@ -73,24 +85,24 @@ config = {
     'shuffle_buffer_size': 1000, # 1000
     'total_timesteps': 100,
     'min_mean_speed': None,
-    'num_files': 100,
+    'num_files': 500,
     'training_path': '/data/saruman/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
     'validation_path': '/data/saruman/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
     'should_cache': True
     }
 
-# for radius in [20, 40, 60, 80, 100]:
-#     for angle_min in [jnp.pi / 8, jnp.pi / 4, jnp.pi / 2, jnp.pi, jnp.pi * 2]:
-        
-# config['obs_mask_kwargs']['radius'] = radius
-# config['obs_mask_kwargs']['angle_min'] = angle_min
+# for radius in [25]: #, 50, 100]:
+#     for angle_min in [jnp.pi * 2]: #[jnp.pi / 2, jnp.pi, 3 / 2 * jnp.pi, jnp.pi * 2]:
 
-# for sigma_max in [0,1,3,5]:
-#     
-    # config['obs_mask_kwargs']['sigma_max'] = sigma_max
+#         config['obs_mask_kwargs']['radius'] = radius
+#         config['obs_mask_kwargs']['angle_min'] = angle_min
+
+        # for sigma_max in [0,1,3,5]:
+        #
+            # config['obs_mask_kwargs']['sigma_max'] = sigma_max
 
 # Ckeckpoint path
-current_time = datetime.now() 
+current_time = datetime.now()
 date_string = current_time.strftime("%Y%m%d_%H%M%S")
 
 log_folder = f"logs/{date_string}"
@@ -99,7 +111,7 @@ os.makedirs(log_folder, exist_ok='True')
 config['log_folder'] = log_folder
 if 'heading' in config['feature_extractor_kwargs']['keys']:
     config['HEADING_RADIUS'] = HEADING_RADIUS
-    
+
 # Save training config
 training_args = config
 
@@ -184,6 +196,5 @@ training = make_train(config,
                     data # DEBUG
                     )
 
-with jax.disable_jit(): # DEBUG
-    training_dict = training.train()
-    
+# with jax.disable_jit(): # DEBUG
+training_dict = training.train()

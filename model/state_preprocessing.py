@@ -58,7 +58,7 @@ def extract_goal(state, obs):
 
     return proxy_goal
 
-def extract_heading(state, obs, radius=HEADING_RADIUS):
+def extract_heading(state, obs, radius):
     """Generates the heading for the SDC to move towards 
     the log position radius meters away from its 
     current position.
@@ -195,12 +195,12 @@ EXTRACTOR_DICT = {'xy': extract_xy,
                   'roadgraph_map': extract_roadgraph,
                   'traffic_lights': extract_trafficlights}
 
-def init_dict(config):
-    return {'xy': jnp.zeros((1, config["num_envs"], config['max_num_obj'], 2)),
-            'proxy_goal': jnp.zeros((1, config["num_envs"], 2)),
-            'heading': jnp.zeros((1, config["num_envs"], 2)),
-            'roadgraph_map': jnp.zeros((1, config["num_envs"], config['roadgraph_top_k'], 24)),
-            'traffic_lights': jnp.zeros((1, config["num_envs"], 16, 11))
+def init_dict(config, batch_size):
+    return {'xy': jnp.zeros((1, batch_size, config['max_num_obj'], 2)),
+            'proxy_goal': jnp.zeros((1, batch_size, 2)),
+            'heading': jnp.zeros((1, batch_size, 2)),
+            'roadgraph_map': jnp.zeros((1, batch_size, config['roadgraph_top_k'], 24)),
+            'traffic_lights': jnp.zeros((1, batch_size, 16, 11))
             }
 
 class Extractor(ABC):
@@ -221,7 +221,11 @@ class ExtractObs(Extractor):
         obs_features = {}
         
         for key in self.config['feature_extractor_kwargs']['keys']:
-            obs_feature = EXTRACTOR_DICT[key](state, obs)
+            if key in self.config['feature_extractor_kwargs']['kwargs']:
+                kwargs = self.config['feature_extractor_kwargs']['kwargs']|[key]
+                obs_feature = EXTRACTOR_DICT[key](state, obs, *kwargs)
+            else:
+                obs_feature = EXTRACTOR_DICT[key](state, obs)
             B = obs_feature.shape[0]
             obs_feature = jnp.squeeze(obs_feature)
             if B == 1:
@@ -229,11 +233,15 @@ class ExtractObs(Extractor):
             obs_features[key] = obs_feature
         return obs_features
     
-    def init_x(self,):
+    def init_x(self, batch_size=None):
         init_obs = {}
-        all_init_dict = init_dict(self.config)
+        
+        if batch_size is None:
+            batch_size = self.config['num_envs']
+            
+        all_init_dict = init_dict(self.config, batch_size)
         for key in self.config['feature_extractor_kwargs']['keys']:
             init_obs[key] = all_init_dict[key]
         return  (init_obs,
-                 jnp.zeros((1, self.config["num_envs"]), dtype=bool),
+                 jnp.zeros((1, batch_size), dtype=bool),
                  )

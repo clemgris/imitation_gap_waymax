@@ -115,14 +115,15 @@ class IdentityEncoder(nn.Module):
         return x
 
 FEATURES_EXTRACTOR_DICT = {'xy': IdentityEncoder,
-                        'proxy_goal': IdentityEncoder,
-                        'heading': IdentityEncoder,
-                        'roadgraph_map': PolylineEncoder,
-                        'traffic_lights': IdentityEncoder}
+                           'proxy_goal': IdentityEncoder,
+                           'heading': IdentityEncoder,
+                           'roadgraph_map': PolylineEncoder,
+                           'traffic_lights': IdentityEncoder}
 
 class KeyExtractor(nn.Module):
     final_hidden_layers: int
     keys: List
+    kwargs: Dict = None
     hidden_layers: Dict = None
 
     @nn.compact
@@ -136,7 +137,7 @@ class KeyExtractor(nn.Module):
             T, B = x.shape[:2]  # Extract dimensions T (time_steps) and B (batch_size) from obs shape
             x = x.reshape((T, B, -1)) # Flatten
             outputs.append(x)
-        
+
         flattened = jnp.concatenate(outputs, axis=-1)
     
         output = nn.Dense(self.final_hidden_layers, kernel_init=orthogonal(2), bias_init=constant(0.0))(flattened)

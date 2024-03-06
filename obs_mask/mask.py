@@ -187,8 +187,8 @@ class SpeedConicObsMask(ObsMask):
 
         return ConicObsMask(self.radius, angle).mask_fun(obj_x, obj_y, eps=eps)
     
-    def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
-        angle = self.sdc_v.clip(0, self.v_max) * (self.angle_min - self.angle_max) / self.v_max + self.angle_max
+    def plot_mask_fun(self, ax, sdc_v, center=(0, 0), color='b') -> None:
+        angle = sdc_v.clip(0, self.v_max) * (self.angle_min - self.angle_max) / self.v_max + self.angle_max
 
         ConicObsMask(self.radius, angle).plot_mask_fun(ax, center=center, color=color)
         
@@ -221,7 +221,7 @@ class SpeedGaussianNoise(ObsMask):
                           linear_clip_scale(sdc_v, self.v_max, self.sigma_min, self.sigma_max)[..., None] * jnp.ones_like(xy),
                           jnp.zeros_like(xy))
         
-        gaussian_noise = jax.random.normal(jax.random.PRNGKey(rng), xy.shape) * sigma
+        gaussian_noise = jax.random.normal(rng, xy.shape) * sigma
         
         noisy_xy = xy + gaussian_noise
 
@@ -257,7 +257,7 @@ class SpeedUniformNoise(ObsMask):
                           linear_clip_scale(sdc_v, self.v_max, self.bound_min, self.bound_max)[..., None] * jnp.ones_like(xy),
                           jnp.zeros_like(xy))
         
-        uniform_noise = jax.random.uniform(jax.random.PRNGKey(rng), 
+        uniform_noise = jax.random.uniform(rng, 
                                           minval=-bound, 
                                           maxval=bound, 
                                           shape=xy.shape)

@@ -65,10 +65,7 @@ class ActorCriticRNN(nn.Module):
         actor_std = nn.softplus(actor_std)
         
         # pi = distrax.Categorical(logits=actor_mean) # DISCRET ACTION SPACE
-        pi = tfd.TruncatedNormal(loc=actor_mean, 
-                                scale=actor_std,
-                                low=self.action_minimum,
-                                high=self.action_maximum)
+        pi = tfd.Normal(loc=actor_mean, scale=actor_std) # CONTINUOUS ACTION SPACE
         
         # Critic
         x_critic = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x)
