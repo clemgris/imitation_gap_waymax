@@ -210,6 +210,7 @@ class make_train:
         def _single_update(train_state, data, rng):
 
             scenario = jit_postprocess_fn(data)
+
             # COLLECT TRAJECTORIES FROM scenario
             def _env_step(cary, unused):
 
@@ -250,7 +251,7 @@ class make_train:
             (_, rng), traj_batch = jax.lax.scan(_env_step, (current_state, rng), None, self.config["num_steps"])
 
             # BACKPROPAGATION ON THE SCENARIO
-            def _loss_fn(params, init_rnn_state, log_traj_batch, traj_batch, rng):
+            def _loss_fn(params, init_rnn_state, log_traj_batch, traj_batch):
                 # Compute the rnn_state from the log on the first steps
                 rnn_state, _, _ = network.apply(params, init_rnn_state, (log_traj_batch.obs, log_traj_batch.done))
                 # Compute the action for the rest of the trajectory
@@ -266,15 +267,15 @@ class make_train:
                 return total_loss
 
             grad_fn = jax.value_and_grad(_loss_fn, has_aux=False)
-            loss, grads = grad_fn(train_state.params, init_rnn_state_train, log_traj_batch, traj_batch, rng)
+            loss, grads = grad_fn(train_state.params, init_rnn_state_train, log_traj_batch, traj_batch)
             return loss, grads
 
-        pmap_funct = jax.pmap(lambda x, rng: _single_update(train_state, x, rng))
+        pmap_funct = jax.pmap(lambda train_state, x, rng: _single_update(train_state, x, rng))
 
         # Aggregate losses, grads and update
-        def _global_update(train_state, loss, grads):
+        def _global_update(train_state, losses, grads):
             mean_grads = jax.tree_map(lambda x: x.mean(0), grads)
-            mean_loss = jax.tree_map(lambda x: x.mean(0), loss)
+            mean_loss = jax.tree_map(lambda x: x.mean(0), losses)
 
             train_state = train_state.apply_gradients(grads=mean_grads)
 
@@ -348,11 +349,12 @@ class make_train:
 
                 minibatched_data = _minibatch(data)
                 rng_pmap = jax.random.split(rng, self.n_minibatch)
-                loss, grads = pmap_funct(minibatched_data, rng_pmap)
+                expanded_train_state = jax.tree_map(lambda x: jnp.tile(jnp.expand_dims(x, axis=0), (self.n_minibatch, 1)), train_state)
 
-                train_state, mean_loss = jit_global_update(train_state, loss, grads)
+                loss, grads = pmap_funct(expanded_train_state, minibatched_data, rng_pmap)
+                train_state_new, mean_loss = jit_global_update(train_state, loss, grads)
 
-                return train_state, mean_loss
+                return train_state_new, mean_loss
 
             metric = {'loss': []}
             losses = []
@@ -407,18 +409,18 @@ class make_train:
             train_message = f"Epoch | {epoch} | Train | loss | {jnp.array(train_metric['loss']).mean():.4f}"
             print(train_message)
 
-            # Validation
-            if (epoch % self.config['freq_eval'] == 0) or (epoch == self.config['num_epochs'] - 1):
+            # # Validation
+            # if (epoch % self.config['freq_eval'] == 0) or (epoch == self.config['num_epochs'] - 1):
 
-                self.key, rng_eval = jax.random.split(self.key)
-                _, val_metric = _evaluate_epoch(train_state, rng_eval)
-                metrics[epoch]['validation'] = val_metric
+            #     self.key, rng_eval = jax.random.split(self.key)
+            #     _, val_metric = _evaluate_epoch(train_state, rng_eval)
+            #     metrics[epoch]['validation'] = val_metric
 
-                val_message = f'Epoch | {epoch} | Val | '
-                for key, value in val_metric.items():
-                    val_message += f" {key} | {jnp.array(value).mean():.4f} | "
+            #     val_message = f'Epoch | {epoch} | Val | '
+            #     for key, value in val_metric.items():
+            #         val_message += f" {key} | {jnp.array(value).mean():.4f} | "
 
-                print(val_message)
+            #     print(val_message)
 
             if (epoch % self.config['freq_save'] == 0) or (epoch == self.config['num_epochs'] - 1):
                 past_log_metric = os.path.join(self.config['log_folder'], f'training_metrics_{epoch - self.config["freq_save"]}.pkl')
