@@ -422,7 +422,7 @@ class make_train:
             total_loss, grads = grad_fn(train_state.params, init_rnn_state_train, log_traj_batch, traj_batch_bc, traj_batch_rl, advantages, targets, rng)
             return total_loss, grads
 
-        pmap_funct = jax.pmap(lambda x, rng: _single_update(train_state, x, rng))
+        pmap_funct = jax.pmap(lambda train_state, x, rng: _single_update(train_state, x, rng))
 
         # Aggregate losses, grads and update
         def _global_update(train_state, loss, grads):
@@ -456,7 +456,7 @@ class make_train:
 
                 # Extract obs in SDC referential
                 obs = datatypes.sdc_observation_from_state(current_state,
-                                                            roadgraph_top_k=self.config['roadgraph_top_k'])
+                                                           roadgraph_top_k=self.config['roadgraph_top_k'])
                 # Mask
                 rng, rng_obs = jax.random.split(rng)
                 if self.obs_mask is not None:
@@ -469,7 +469,7 @@ class make_train:
                 rng, rng_sample = jax.random.split(rng)
                 action_data = action_dist.sample(seed=rng_sample).squeeze(0)
                 action = datatypes.Action(data=action_data,
-                                            valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
+                                          valid=jnp.ones((self.config['num_envs_eval'], 1), dtype='bool'))
 
                 # Patch bug in waymax (squeeze timestep dimension when using reset --> need squeezed timestep for update)
                 current_timestep = current_state['timestep']
@@ -501,7 +501,9 @@ class make_train:
 
                 minibatched_data = _minibatch(data)
                 rng_pmap = jax.random.split(rng, self.n_minibatch)
-                loss, grads = pmap_funct(minibatched_data, rng_pmap)
+                expanded_train_state = jax.tree_map(lambda x: jnp.repeat(jnp.expand_dims(x, axis=0), self.n_minibatch, axis=0), train_state)
+                
+                loss, grads = pmap_funct(expanded_train_state, minibatched_data, rng_pmap)
 
                 train_state, mean_loss = jit_global_update(train_state, loss, grads)
 
