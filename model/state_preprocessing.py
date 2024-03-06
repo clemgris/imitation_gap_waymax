@@ -9,8 +9,6 @@ from model.model_utils import combine_two_object_pose_2d, radius_point_extra
 from waymax import datatypes
 from waymax.datatypes import transform_trajectory
 
-from dataset.config import HEADING_RADIUS
-
 from utils.observation import last_sdc_observation_for_current_sdc_from_state
 
 def extract_xy(state, obs):
@@ -222,8 +220,8 @@ class ExtractObs(Extractor):
         
         for key in self.config['feature_extractor_kwargs']['keys']:
             if key in self.config['feature_extractor_kwargs']['kwargs']:
-                kwargs = self.config['feature_extractor_kwargs']['kwargs']|[key]
-                obs_feature = EXTRACTOR_DICT[key](state, obs, *kwargs)
+                kwargs = self.config['feature_extractor_kwargs']['kwargs'][key]
+                obs_feature = EXTRACTOR_DICT[key](state, obs, **kwargs)
             else:
                 obs_feature = EXTRACTOR_DICT[key](state, obs)
             B = obs_feature.shape[0]

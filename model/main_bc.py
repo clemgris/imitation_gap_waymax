@@ -9,8 +9,6 @@ from waymax import config as _config
 from waymax import dataloader
 from rnnbc import make_train
 
-from dataset.config import HEADING_RADIUS
-
 from utils.dataloader import tf_examples_dataset
 # Desable preallocation for jax and tensorflow
 import os
@@ -39,12 +37,12 @@ config = {
                                  'hidden_layers': {'roadgraph_map': 8},
                                  'keys': [
                                     'xy',
-                                    'proxy_goal',
-                                    # 'heading',
-                                    # 'roadgraph_map'
+                                    # 'proxy_goal',
+                                    'heading',
+                                    'roadgraph_map'
                                         ],
                                  'kwargs': {
-                                    #  'heading': {'radius': 10}
+                                     'heading': {'radius': None}
                                      }
                                  },
     'freq_eval': 10,
@@ -56,7 +54,7 @@ config = {
     "max_grad_norm": 0.5,
     'max_num_obj': 32,
     'max_num_rg_points': 20000,
-    'num_envs': 512,
+    'num_envs': 256,
     'num_envs_eval': 16,
     "num_epochs": 150,
     'num_steps': 80,
@@ -101,100 +99,102 @@ config = {
         #
             # config['obs_mask_kwargs']['sigma_max'] = sigma_max
 
-# Ckeckpoint path
-current_time = datetime.now()
-date_string = current_time.strftime("%Y%m%d_%H%M%S")
+for radius in [1, 5, 10, 20, 50]:
+    
+    config['feature_extractor_kwargs']['kwargs']['heading']['radius'] = radius
+        
+    # Ckeckpoint path
+    current_time = datetime.now()
+    date_string = current_time.strftime("%Y%m%d_%H%M%S")
 
-log_folder = f"logs/{date_string}"
-os.makedirs(log_folder, exist_ok='True')
+    log_folder = f"logs/{date_string}"
+    os.makedirs(log_folder, exist_ok='True')
 
-config['log_folder'] = log_folder
-if 'heading' in config['feature_extractor_kwargs']['keys']:
-    config['HEADING_RADIUS'] = HEADING_RADIUS
+    config['log_folder'] = log_folder
 
-# Save training config
-training_args = config
+    # Save training config
+    training_args = config
 
-with open(os.path.join(log_folder, 'args.json'), 'w') as json_file:
-    json.dump(training_args, json_file, indent=4)
+    with open(os.path.join(log_folder, 'args.json'), 'w') as json_file:
+        json.dump(training_args, json_file, indent=4)
 
-# Data iter config
-WOD_1_1_0_TRAINING = _config.DatasetConfig(
-    path=config['training_path'],
-    max_num_rg_points=config['max_num_rg_points'],
-    shuffle_seed=config['shuffle_seed'],
-    shuffle_buffer_size=config['shuffle_buffer_size'],
-    data_format=_config.DataFormat.TFRECORD,
-    batch_dims = (config['num_envs'],),
-    max_num_objects=config['max_num_obj'],
-    include_sdc_paths=config['include_sdc_paths'],
-    repeat=None
-)
+    # Data iter config
+    WOD_1_1_0_TRAINING = _config.DatasetConfig(
+        path=config['training_path'],
+        max_num_rg_points=config['max_num_rg_points'],
+        shuffle_seed=config['shuffle_seed'],
+        shuffle_buffer_size=config['shuffle_buffer_size'],
+        data_format=_config.DataFormat.TFRECORD,
+        batch_dims = (config['num_envs'],),
+        max_num_objects=config['max_num_obj'],
+        include_sdc_paths=config['include_sdc_paths'],
+        repeat=None
+    )
 
-# Data iter config
-WOD_1_1_0_VALIDATION = _config.DatasetConfig(
-    path=config['validation_path'],
-    max_num_rg_points=config['max_num_rg_points'],
-    shuffle_seed=None,
-    data_format=_config.DataFormat.TFRECORD,
-    batch_dims = (config['num_envs_eval'],),
-    max_num_objects=config['max_num_obj'],
-    include_sdc_paths=config['include_sdc_paths'],
-    repeat=1
-)
+    # Data iter config
+    WOD_1_1_0_VALIDATION = _config.DatasetConfig(
+        path=config['validation_path'],
+        max_num_rg_points=config['max_num_rg_points'],
+        shuffle_seed=None,
+        data_format=_config.DataFormat.TFRECORD,
+        batch_dims = (config['num_envs_eval'],),
+        max_num_objects=config['max_num_obj'],
+        include_sdc_paths=config['include_sdc_paths'],
+        repeat=1
+    )
 
-# Training dataset
-train_dataset = tf_examples_dataset(
-    path=WOD_1_1_0_TRAINING.path,
-    data_format=WOD_1_1_0_TRAINING.data_format,
-    preprocess_fn=functools.partial(dataloader.preprocess_serialized_womd_data, config=WOD_1_1_0_TRAINING),
-    shuffle_seed=WOD_1_1_0_TRAINING.shuffle_seed,
-    shuffle_buffer_size=WOD_1_1_0_TRAINING.shuffle_buffer_size,
-    repeat=WOD_1_1_0_TRAINING.repeat,
-    batch_dims=WOD_1_1_0_TRAINING.batch_dims,
-    num_shards=WOD_1_1_0_TRAINING.num_shards,
-    deterministic=WOD_1_1_0_TRAINING.deterministic,
-    drop_remainder=WOD_1_1_0_TRAINING.drop_remainder,
-    tf_data_service_address=WOD_1_1_0_TRAINING.tf_data_service_address,
-    batch_by_scenario=WOD_1_1_0_TRAINING.batch_by_scenario,
-    filter_function=None,
-    num_files = config['num_files'],
-    should_cache = config['should_cache']
-)
+    # Training dataset
+    train_dataset = tf_examples_dataset(
+        path=WOD_1_1_0_TRAINING.path,
+        data_format=WOD_1_1_0_TRAINING.data_format,
+        preprocess_fn=functools.partial(dataloader.preprocess_serialized_womd_data, config=WOD_1_1_0_TRAINING),
+        shuffle_seed=WOD_1_1_0_TRAINING.shuffle_seed,
+        shuffle_buffer_size=WOD_1_1_0_TRAINING.shuffle_buffer_size,
+        repeat=WOD_1_1_0_TRAINING.repeat,
+        batch_dims=WOD_1_1_0_TRAINING.batch_dims,
+        num_shards=WOD_1_1_0_TRAINING.num_shards,
+        deterministic=WOD_1_1_0_TRAINING.deterministic,
+        drop_remainder=WOD_1_1_0_TRAINING.drop_remainder,
+        tf_data_service_address=WOD_1_1_0_TRAINING.tf_data_service_address,
+        batch_by_scenario=WOD_1_1_0_TRAINING.batch_by_scenario,
+        filter_function=None,
+        num_files = config['num_files'],
+        should_cache = config['should_cache']
+    )
 
-data = train_dataset.as_numpy_iterator().next() # DEBUG
+    data = train_dataset.as_numpy_iterator().next() # DEBUG
 
-# Validation dataset
-val_dataset = dataloader.tf_examples_dataset(
-    path=WOD_1_1_0_VALIDATION.path,
-    data_format=WOD_1_1_0_VALIDATION.data_format,
-    preprocess_fn=functools.partial(dataloader.preprocess_serialized_womd_data, config=WOD_1_1_0_VALIDATION),
-    shuffle_seed=WOD_1_1_0_VALIDATION.shuffle_seed,
-    shuffle_buffer_size=WOD_1_1_0_VALIDATION.shuffle_buffer_size,
-    repeat=WOD_1_1_0_VALIDATION.repeat,
-    batch_dims=WOD_1_1_0_VALIDATION.batch_dims,
-    num_shards=WOD_1_1_0_VALIDATION.num_shards,
-    deterministic=WOD_1_1_0_VALIDATION.deterministic,
-    drop_remainder=WOD_1_1_0_VALIDATION.drop_remainder,
-    tf_data_service_address=WOD_1_1_0_VALIDATION.tf_data_service_address,
-    batch_by_scenario=WOD_1_1_0_VALIDATION.batch_by_scenario,
-)
+    # Validation dataset
+    val_dataset = dataloader.tf_examples_dataset(
+        path=WOD_1_1_0_VALIDATION.path,
+        data_format=WOD_1_1_0_VALIDATION.data_format,
+        preprocess_fn=functools.partial(dataloader.preprocess_serialized_womd_data, config=WOD_1_1_0_VALIDATION),
+        shuffle_seed=WOD_1_1_0_VALIDATION.shuffle_seed,
+        shuffle_buffer_size=WOD_1_1_0_VALIDATION.shuffle_buffer_size,
+        repeat=WOD_1_1_0_VALIDATION.repeat,
+        batch_dims=WOD_1_1_0_VALIDATION.batch_dims,
+        num_shards=WOD_1_1_0_VALIDATION.num_shards,
+        deterministic=WOD_1_1_0_VALIDATION.deterministic,
+        drop_remainder=WOD_1_1_0_VALIDATION.drop_remainder,
+        tf_data_service_address=WOD_1_1_0_VALIDATION.tf_data_service_address,
+        batch_by_scenario=WOD_1_1_0_VALIDATION.batch_by_scenario,
+    )
 
-# Env config
-env_config = _config.EnvironmentConfig(
-    controlled_object=_config.ObjectType.SDC,
-    max_num_objects=config['max_num_obj']
-)
+    # Env config
+    env_config = _config.EnvironmentConfig(
+        controlled_object=_config.ObjectType.SDC,
+        max_num_objects=config['max_num_obj']
+    )
 
-##
-# TRAINING
-##
-training = make_train(config,
-                    env_config,
-                    train_dataset,
-                    val_dataset,
-                    data # DEBUG
-                    )
+    ##
+    # TRAINING
+    ##
+    training = make_train(config,
+                        env_config,
+                        train_dataset,
+                        val_dataset,
+                        data # DEBUG
+                        )
 
-# with jax.disable_jit(): # DEBUG
-training_dict = training.train()
+    # with jax.disable_jit(): # DEBUG
+    training_dict = training.train()
