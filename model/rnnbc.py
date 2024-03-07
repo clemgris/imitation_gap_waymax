@@ -189,7 +189,10 @@ class make_train:
                 obs = self.obs_mask.mask_obs(current_state, obs, rng_obs)
 
             # Extract the features from the observation
-            obsv = self.extractor(current_state, obs)
+            breakpoint()
+            rng, rng_extract = jax.random.split(rng, self.config['num_envs'])
+            breakpoint()
+            obsv = self.extractor(current_state, obs, rng_extract)
 
             transition = Transition(done,
                                     None,
@@ -233,7 +236,8 @@ class make_train:
                     obs = self.obs_mask.mask_obs(current_state, obs, rng_obs)
 
                 # Extract the features from the observation
-                obsv = self.extractor(current_state, obs)
+                rng, rng_extract = jax.random.split(rng)
+                obsv = self.extractor(current_state, obs, rng_extract)
 
                 transition = Transition(done,
                                         expert_action,
@@ -311,7 +315,8 @@ class make_train:
                     obs = self.obs_mask.mask_obs(current_state, obs, rng_obs)
 
                 # Extract the features from the observation
-                obsv = self.extractor(current_state, obs)
+                rng, rng_extract = jax.random.split(rng)
+                obsv = self.extractor(current_state, obs, rng_extract)
 
                 rnn_state, action_dist, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                 rng, rng_sample = jax.random.split(rng)

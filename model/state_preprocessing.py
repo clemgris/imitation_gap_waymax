@@ -11,7 +11,7 @@ from waymax.datatypes import transform_trajectory
 
 from utils.observation import last_sdc_observation_for_current_sdc_from_state
 
-def extract_xy(state, obs):
+def extract_xy(state, obs, rng):
     """Extract the xy positions of the object of the scene.
     Mask the unvalid objects with a default value (UNVALID_MASK_VALUE).
 
@@ -33,9 +33,9 @@ def extract_xy(state, obs):
     
     return masked_traj
 
-def extract_goal(state, obs):
+def extract_goal(state, obs, rng):
     """Generates the proxy goal as the last 
-    xy positin of the SDC in the log trajectory.
+    xy positoin of the SDC in the log trajectory.
 
     Args:
         state: The current simulator state.
@@ -56,7 +56,38 @@ def extract_goal(state, obs):
 
     return proxy_goal
 
-def extract_heading(state, obs, radius):
+
+def extract_noisy_goal(state, obs, rng, sigma):
+    """Generates the proxy goal as the last 
+    xy positoin of the SDC in the log trajectory and add a Gaussian noise
+    with mean 0 and std.
+
+    Args:
+        state: The current simulator state.
+        obs: The current observation of the SDC in its local referential (unused).
+        sigma: The standard deviation of the noise. Note that the mean is always 0.
+        rng: Random key.
+
+    Returns:
+        Proxy goal of shape (..., 2). Note that the proxy 
+        goal coordinates are in the referential of the current
+        SDC position.
+    """
+    _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
+
+    last_sdc_obs = last_sdc_observation_for_current_sdc_from_state(state) # Last obs of the log in the current SDC pos referential
+    last_sdc_xy = jnp.take_along_axis(last_sdc_obs.trajectory.xy[..., 0, :], sdc_idx[..., None, None], axis=-2)
+    
+    mask = jnp.any(state.object_metadata.is_sdc)[..., None, None] # Mask if scenario with no SDC
+    proxy_goal = last_sdc_xy * mask
+    breakpoint()
+    noise = jax.random.normal(rng, proxy_goal.shape) * sigma
+
+    noisy_proxy_goal = noise + proxy_goal
+    
+    return noisy_proxy_goal
+
+def extract_heading(state, obs, rng, radius):
     """Generates the heading for the SDC to move towards 
     the log position radius meters away from its 
     current position.
@@ -136,7 +167,7 @@ def extract_heading(state, obs, radius):
 
     return jax.vmap(proxy_heading, (0, None))(state, radius)
 
-def extract_roadgraph(state, obs):
+def extract_roadgraph(state, obs, rng):
     """Extract the features (xy, dir_xy, type) of the roadgraph 
     points. Mask the unvalid objects with a default value (UNVALID_MASK_VALUE).
 
@@ -163,7 +194,7 @@ def extract_roadgraph(state, obs):
     
     return roadmap_point_features
 
-def extract_trafficlights(state, obs):
+def extract_trafficlights(state, obs, rng):
     """Extract the features (xy positions, type) of the traffic 
     lights present in the scene. Mask the unvalid objects with
     a default value (UNVALID_MASK_VALUE).
@@ -189,6 +220,7 @@ def extract_trafficlights(state, obs):
 
 EXTRACTOR_DICT = {'xy': extract_xy,
                   'proxy_goal': extract_goal,
+                  'noisy_proxy_goal': extract_noisy_goal,
                   'heading': extract_heading,
                   'roadgraph_map': extract_roadgraph,
                   'traffic_lights': extract_trafficlights}
@@ -196,6 +228,7 @@ EXTRACTOR_DICT = {'xy': extract_xy,
 def init_dict(config, batch_size):
     return {'xy': jnp.zeros((1, batch_size, config['max_num_obj'], 2)),
             'proxy_goal': jnp.zeros((1, batch_size, 2)),
+            'noisy_proxy_goal': jnp.zeros((1, batch_size, 2)),
             'heading': jnp.zeros((1, batch_size, 2)),
             'roadgraph_map': jnp.zeros((1, batch_size, config['roadgraph_top_k'], 24)),
             'traffic_lights': jnp.zeros((1, batch_size, 16, 11))
@@ -215,15 +248,15 @@ class Extractor(ABC):
 class ExtractObs(Extractor):
     config: Dict
 
-    def __call__(self, state, obs):
+    def __call__(self, state, obs, rng):
         obs_features = {}
         
         for key in self.config['feature_extractor_kwargs']['keys']:
             if key in self.config['feature_extractor_kwargs']['kwargs']:
                 kwargs = self.config['feature_extractor_kwargs']['kwargs'][key]
-                obs_feature = EXTRACTOR_DICT[key](state, obs, **kwargs)
+                obs_feature = EXTRACTOR_DICT[key](state, obs, rng, **kwargs)
             else:
-                obs_feature = EXTRACTOR_DICT[key](state, obs)
+                obs_feature = EXTRACTOR_DICT[key](state, obs, rng)
             B = obs_feature.shape[0]
             obs_feature = jnp.squeeze(obs_feature)
             if B == 1:

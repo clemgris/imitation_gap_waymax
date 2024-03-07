@@ -116,6 +116,7 @@ class IdentityEncoder(nn.Module):
 
 FEATURES_EXTRACTOR_DICT = {'xy': IdentityEncoder,
                            'proxy_goal': IdentityEncoder,
+                           'noisy_proxy_goal': IdentityEncoder,
                            'heading': IdentityEncoder,
                            'roadgraph_map': PolylineEncoder,
                            'traffic_lights': IdentityEncoder}
