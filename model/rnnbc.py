@@ -189,9 +189,8 @@ class make_train:
                 obs = self.obs_mask.mask_obs(current_state, obs, rng_obs)
 
             # Extract the features from the observation
-            breakpoint()
-            rng, rng_extract = jax.random.split(rng, self.config['num_envs'])
-            breakpoint()
+
+            rng, rng_extract = jax.random.split(rng)
             obsv = self.extractor(current_state, obs, rng_extract)
 
             transition = Transition(done,
