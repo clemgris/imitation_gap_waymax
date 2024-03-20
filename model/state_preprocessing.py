@@ -80,7 +80,7 @@ def extract_noisy_goal(state, obs, rng, sigma):
     
     mask = jnp.any(state.object_metadata.is_sdc)[..., None, None] # Mask if scenario with no SDC
     proxy_goal = last_sdc_xy * mask
-    breakpoint()
+    
     noise = jax.random.normal(rng, proxy_goal.shape) * sigma
 
     noisy_proxy_goal = noise + proxy_goal
@@ -140,9 +140,9 @@ def extract_heading(state, obs, rng, radius):
 
         # Compute dist to the current SDC pos
         dist_matrix = jnp.linalg.norm(sdc_transf_traj_xy, axis=-1)
-        dist_matrix = jnp.where((jnp.arange(91) < state.timestep)[None, ...],
-                            jnp.zeros_like(dist_matrix), 
-                            dist_matrix)
+        dist_matrix = jnp.where((sdc_transf_traj_xy[..., 0] < 0),
+                                jnp.zeros_like(dist_matrix), 
+                                 dist_matrix)
 
         # Intersection btw the circle and log trajectory
         _, idx_radius_point = jax.lax.top_k(dist_matrix >= radius, k=1)
