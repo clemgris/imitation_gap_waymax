@@ -13,7 +13,7 @@ from utils.dataloader import tf_examples_dataset
 # Desable preallocation for jax and tensorflow
 import os
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0" #,1,2,3,4,5,6,7"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
 
 import tensorflow as tf
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -34,23 +34,29 @@ config = {
     'extractor': 'ExtractObs',
     'feature_extractor': 'KeyExtractor',
     'feature_extractor_kwargs': {'final_hidden_layers': 128,
-                                 'hidden_layers': {'roadgraph_map': 8},
+                                 'hidden_layers': {
+                                     'xy': 128,
+                                     'sdc_speed': 32,
+                                     'heading': 32,
+                                     'roadgraph_map': 128},
                                  'keys': [
                                     'xy',
+                                    'sdc_speed',
                                     # 'proxy_goal',
-                                    'noisy_proxy_goal',
-                                    # 'heading',
+                                    # 'noisy_proxy_goal',
+                                    'heading',
                                     'roadgraph_map'
                                         ],
                                  'kwargs': {
-                                    #  'heading': {'radius': None},
-                                     'noisy_proxy_goal': {'sigma': 10}
+                                     'heading': {'radius': 10},
+                                    #  'noisy_proxy_goal': {'sigma': 100}
                                      }
                                  },
     'freq_eval': 10,
     'freq_save': 10,
     'include_sdc_paths': False,
     'key': 42,
+    'loss': 'mse',
     'lr': 3e-4,
     'lr_scheduler': False,
     "max_grad_norm": 0.5,
@@ -58,9 +64,9 @@ config = {
     'max_num_rg_points': 20000,
     'num_envs': 256,
     'num_envs_eval': 16,
-    "num_epochs": 150,
+    "num_epochs": 200,
     'num_steps': 80,
-    'obs_mask': None, #'SpeedConicObsMask', #'ZeroMask', #'SpeedGaussianNoise', #'SpeedUniformNoise', #'SpeedConicObsMask',
+    'obs_mask':  None, #'SpeedConicObsMask', #'ZeroMask', #'SpeedGaussianNoise', #'SpeedUniformNoise', #'SpeedConicObsMask',
     'obs_mask_kwargs': None,
         # {},
 
@@ -75,24 +81,24 @@ config = {
         # },
 
         # {
-        # 'radius': 25, # Sanity check (as full obs)
-        # 'angle_max': 2/3 * jnp.pi,
-        # 'angle_min': 1/8 * jnp.pi, # Sanity check (as full obs)
+        # 'radius': 0, #None, # Sanity check (as full obs)
+        # 'angle_max': 0, # 2 / 3 * jnp.pi,
+        # 'angle_min': 0, # Sanity check (as full obs)
         # 'v_max': 15, # 15,
         # },
-    'roadgraph_top_k': 2000,
+    'roadgraph_top_k': 500,
     'shuffle_seed': 123,
     'shuffle_buffer_size': 1000, # 1000
     'total_timesteps': 100,
     'min_mean_speed': None,
     'num_files': 100, #500,
-    'training_path': '/data/lynx/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
-    'validation_path': '/data/lynx/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
+    'training_path': '/data/draco/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
+    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
     'should_cache': True
     }
 
-# for radius in [25]: #, 50, 100]:
-#     for angle_min in [jnp.pi * 2]: #[jnp.pi / 2, jnp.pi, 3 / 2 * jnp.pi, jnp.pi * 2]:
+# for radius in [15]: #15, 25, 50, 100]:
+#     for angle_min in [jnp.pi / 12]: #12, jnp.pi / 8, jnp.pi / 4, jnp.pi / 2]:
 
 #         config['obs_mask_kwargs']['radius'] = radius
 #         config['obs_mask_kwargs']['angle_min'] = angle_min
@@ -102,9 +108,9 @@ config = {
             # config['obs_mask_kwargs']['sigma_max'] = sigma_max
 
 # for radius in [1, 5, 10, 20, 50]:
-    
+
 #     config['feature_extractor_kwargs']['kwargs']['heading']['radius'] = radius
-    
+
 # Ckeckpoint path
 current_time = datetime.now()
 date_string = current_time.strftime("%Y%m%d_%H%M%S")
