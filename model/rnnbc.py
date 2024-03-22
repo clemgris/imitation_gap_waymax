@@ -81,7 +81,7 @@ class make_train:
         # VALIDATION DATASET
         self.val_dataset = val_dataset
 
-        # Random key
+        # RAMDOM KEY
         self.key = random.PRNGKey(self.config['key'])
 
         # DEFINE ENV
@@ -174,7 +174,7 @@ class make_train:
         jit_postprocess_fn = jax.jit(self._post_process)
 
         # Update simulator with log
-        def _log_step(cary, unused):
+        def _log_step(cary, rng_extract):
 
             current_state, rng = cary
 
@@ -190,13 +190,13 @@ class make_train:
 
             # Extract the features from the observation
 
-            rng, rng_extract = jax.random.split(rng)
+            # rng, rng_extract = jax.random.split(rng)
             obsv = self.extractor(current_state, obs, rng_extract)
 
             transition = Transition(done,
                                     None,
                                     obsv
-            )
+                                    )
 
             # Update the simulator with the log trajectory
             current_state = datatypes.update_state_by_log(current_state, num_steps=1)
@@ -212,9 +212,10 @@ class make_train:
         def _single_update(train_state, data, rng):
 
             scenario = jit_postprocess_fn(data)
+            rng, rng_extract = jax.random.split(rng)
 
             # COLLECT TRAJECTORIES FROM scenario
-            def _env_step(cary, unused):
+            def _env_step(cary, rng_extract):
 
                 current_state, rng = cary
 
@@ -235,7 +236,7 @@ class make_train:
                     obs = self.obs_mask.mask_obs(current_state, obs, rng_obs)
 
                 # Extract the features from the observation
-                rng, rng_extract = jax.random.split(rng)
+                # rng, rng_extract = jax.random.split(rng)
                 obsv = self.extractor(current_state, obs, rng_extract)
 
                 transition = Transition(done,
@@ -248,10 +249,18 @@ class make_train:
                 return (current_state, rng), transition
 
             # Compute the rnn_state on first self.env.config.init_steps from the log trajectory
-            (current_state, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1)
+            rng, rng_log = jax.random.split(rng)
+            (current_state, rng), log_traj_batch = jax.lax.scan(_log_step,
+                                                                (scenario, rng_log),
+                                                                rng_extract[None].repeat(self.env.config.init_steps - 1, axis=0),
+                                                                self.env.config.init_steps - 1)
 
             # Use jax.lax.scan with the modified _env_step function
-            (_, rng), traj_batch = jax.lax.scan(_env_step, (current_state, rng), None, self.config["num_steps"])
+            rng, rng_step = jax.random.split(rng)
+            (_, rng), traj_batch = jax.lax.scan(_env_step,
+                                                (current_state, rng_step),
+                                                rng_extract[None].repeat(self.config["num_steps"], axis=0),
+                                                self.config["num_steps"])
 
             # BACKPROPAGATION ON THE SCENARIO
             def _loss_fn(params, init_rnn_state, log_traj_batch, traj_batch):
@@ -260,12 +269,17 @@ class make_train:
                 # Compute the action for the rest of the trajectory
                 _, action_dist, _ = network.apply(params, rnn_state, (traj_batch.obs, traj_batch.done))
 
-                # log_prob = action_dist.log_prob(traj_batch.expert_action.action.data) # LOGPROB
-                # total_loss = - log_prob.mean()
+                if self.config['loss'] == 'logprob':
+                    log_prob = action_dist.log_prob(traj_batch.expert_action.action.data)
+                    total_loss = - log_prob.mean()
 
-                action = action_dist.sample(seed=rng) # MSE
-                expert_action = traj_batch.expert_action.action.data
-                total_loss = ((action - expert_action)**2).mean()
+                elif self.config['loss'] == 'mse':
+                    action = action_dist.sample(seed=rng)
+
+                    expert_action = traj_batch.expert_action.action.data
+                    total_loss = ((action - expert_action)**2).mean()
+                else:
+                    raise ValueError('Unknown loss')
 
                 return total_loss
 
@@ -273,7 +287,7 @@ class make_train:
             loss, grads = grad_fn(train_state.params, init_rnn_state_train, log_traj_batch, traj_batch)
             return loss, grads
 
-        pmap_funct = jax.pmap(lambda train_state, x, rng: _single_update(train_state, x, rng))
+        pmap_funct = jax.pmap(_single_update)
 
         # Aggregate losses, grads and update
         def _global_update(train_state, losses, grads):
@@ -289,8 +303,15 @@ class make_train:
         # Evaluate
         def _eval_scenario(train_state, scenario, rng):
 
+            rng, rng_extract = jax.random.split(rng)
+
             # Compute the rnn_state on first self.env.config.init_steps from the log trajectory
-            (current_state, rng), log_traj_batch = jax.lax.scan(_log_step, (scenario, rng), None, self.env.config.init_steps - 1)
+            rng, rng_log = jax.random.split(rng)
+            (current_state, rng), log_traj_batch = jax.lax.scan(_log_step,
+                                                                (scenario, rng_log),
+                                                                rng_extract[None].repeat(self.env.config.init_steps - 1, axis=0),
+                                                                self.env.config.init_steps - 1)
+
             rnn_state, _, _ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
 
             def extand(x):
@@ -299,7 +320,7 @@ class make_train:
                 else:
                     return x
 
-            def _eval_step(cary, unused):
+            def _eval_step(cary, rng_extract):
 
                 current_state, rnn_state, rng = cary
 
@@ -314,7 +335,7 @@ class make_train:
                     obs = self.obs_mask.mask_obs(current_state, obs, rng_obs)
 
                 # Extract the features from the observation
-                rng, rng_extract = jax.random.split(rng)
+                # rng, rng_extract = jax.random.split(rng)
                 obsv = self.extractor(current_state, obs, rng_extract)
 
                 rnn_state, action_dist, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
@@ -339,7 +360,11 @@ class make_train:
 
                 return (current_state, rnn_state, rng), metric
 
-            _, scenario_metrics = jax.lax.scan(_eval_step, (current_state, rnn_state, rng), None, TRAJ_LENGTH - self.env.config.init_steps)
+            rng, rng_step = jax.random.split(rng)
+            _, scenario_metrics = jax.lax.scan(_eval_step,
+                                               (current_state, rnn_state, rng_step),
+                                               rng_extract[None].repeat(TRAJ_LENGTH - self.env.config.init_steps, axis=0),
+                                               TRAJ_LENGTH - self.env.config.init_steps)
 
             return scenario_metrics
 
@@ -368,6 +393,7 @@ class make_train:
                 tt += 1
             # for _ in trange(1000) # DEBUG:
             #     data = self.data
+
                 rng, rng_train = jax.random.split(rng)
                 train_state, loss = _update_scenario(train_state, data, rng_train)
                 losses.append(loss)
@@ -383,8 +409,12 @@ class make_train:
         def _evaluate_epoch(train_state, rng):
 
             all_metrics = {'log_divergence': [],
-                            'overlap': [],
-                            'offroad': []}
+                           'max_log_divergence': [],
+                           'overlap_rate': [],
+                           'overlap': [],
+                           'offroad_rate': [],
+                           'offroad': []
+                           }
 
             for data in tqdm(self.val_dataset.as_numpy_iterator(), desc='Validation', total=N_VALIDATION // self.config['num_envs_eval'] + 1):
                 scenario = jit_postprocess_fn(data)
@@ -399,14 +429,32 @@ class make_train:
                         if jnp.any(value.valid):
                             all_metrics[key].append(value.value[value.valid].mean())
 
+                    key = 'max_log_divergence'
+                    value = scenario_metrics['log_divergence']
+                    if jnp.any(value.valid):
+                        all_metrics[key].append(value.value.max(axis=0).mean())
+
+                    key = 'overlap_rate'
+                    value = scenario_metrics['overlap']
+                    if jnp.any(value.valid):
+                        all_metrics[key].append(jnp.any(value.value, axis=0).mean())
+
+                    key = 'offroad_rate'
+                    value = scenario_metrics['offroad']
+                    if jnp.any(value.valid):
+                        all_metrics[key].append(jnp.any(value.value, axis=0).mean())
+
             return train_state, all_metrics
 
         # LOGS AND CHECKPOINTS
         metrics = {}
+        rng = self.key
         for epoch in range(self.config["num_epochs"]):
+
             metrics[epoch] = {}
+
             # Training
-            self.key, rng_train = jax.random.split(self.key)
+            rng, rng_train = jax.random.split(rng)
             train_state, train_metric = _update_epoch(train_state, rng_train)
             metrics[epoch]['train'] = train_metric
 
@@ -416,7 +464,7 @@ class make_train:
             # Validation
             if (epoch % self.config['freq_eval'] == 0) or (epoch == self.config['num_epochs'] - 1):
 
-                self.key, rng_eval = jax.random.split(self.key)
+                rng, rng_eval = jax.random.split(rng)
                 _, val_metric = _evaluate_epoch(train_state, rng_eval)
                 metrics[epoch]['validation'] = val_metric
 
