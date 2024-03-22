@@ -100,8 +100,8 @@ config = {
 # for radius in [15]: #15, 25, 50, 100]:
 #     for angle_min in [jnp.pi / 12]: #12, jnp.pi / 8, jnp.pi / 4, jnp.pi / 2]:
 
-#         config['obs_mask_kwargs']['radius'] = radius
-#         config['obs_mask_kwargs']['angle_min'] = angle_min
+        # config['obs_mask_kwargs']['radius'] = radius
+        # config['obs_mask_kwargs']['angle_min'] = angle_min
 
         # for sigma_max in [0,1,3,5]:
         #
