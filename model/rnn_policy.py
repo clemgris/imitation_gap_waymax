@@ -37,7 +37,7 @@ class ScannedRNN(nn.Module):
         # Use a dummy key since the default state init fn is just zeros.
         batch_size, hidden_size = input_size
         return nn.GRUCell(features=128).initialize_carry(jax.random.key(0), (batch_size, hidden_size))
-    
+
 
 class ActorCriticRNN(nn.Module):
     action_dim: int
@@ -56,21 +56,29 @@ class ActorCriticRNN(nn.Module):
         # RNN
         rnn_in = (state_features, dones)
         new_rnn_state, x = ScannedRNN()(rnn_state, rnn_in)
-        
+
         # Actor
-        x_actor = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x)
+        x_cat = jnp.concatenate((x, state_features), axis=-1)
+
+        x_actor = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x_cat)
         x_actor = jax.nn.relu(x_actor)
+        x_actor = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x_actor)
+
         actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        actor_mean = jax.nn.relu(actor_mean)
+        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_mean)
+
         actor_std = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        actor_std = jax.nn.relu(actor_std)
+        actor_std = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_std)
         actor_std = nn.softplus(actor_std)
-        
+
         # pi = distrax.Categorical(logits=actor_mean) # DISCRET ACTION SPACE
         pi = tfd.Normal(loc=actor_mean, scale=actor_std) # CONTINUOUS ACTION SPACE
-        
-        # Critic
-        x_critic = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x)
-        x_critic = jax.nn.relu(x_critic)
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x_critic)
 
-        # return new_rnn_state, pi, jnp.squeeze(critic, axis=-1) # DISCRETE ACTION SPACE
-        return new_rnn_state, pi, jnp.squeeze(critic, axis=-1) # CONTINUOUS ACTION SPACE
+        # # Critic
+        # x_critic = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x_cat)
+        # x_critic = jax.nn.relu(x_critic)
+        # critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x_critic)
+
+        return new_rnn_state, pi, None #jnp.squeeze(critic, axis=-1)
