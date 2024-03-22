@@ -7,7 +7,6 @@ import pickle
 
 from waymax import config as _config
 from waymax import dataloader
-from waymax import agents
 from eval import make_eval
 
 import os
@@ -24,25 +23,27 @@ if gpus:
 ##
 # CONFIG
 ##
+
 parser = argparse.ArgumentParser(description="Agent evaluation")
 parser.add_argument('--expe_id', '-expe', type=str, help='Id of the experiment')
 parser.add_argument('--epochs', '-e', type=int, help='Number of training epochs')
 parser.add_argument('--IDM', '-IDM', type=int, help='Use IDM for simulated agents')
-parser.add_argument('--n_evals', '-n', type=int, help='Number of evaluation environments')
+parser.add_argument('--GIF', '-GIF', type=int, help='Generate GIFs')
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    
+
     # Training config
-    load_folder = '/data/saruman/cleain/imitation_gap_waymax/logs'
+    load_folder = '/data/draco/cleain/imitation_gap_waymax/logs'
     expe_num = args.expe_id
+
+    os.makedirs(f'/data/draco/cleain/imitation_gap_waymax/animation/{expe_num}', exist_ok=True)
 
     with open(os.path.join(load_folder, expe_num, 'args.json'), 'r') as file:
         config = json.load(file)
 
-
     config['num_epochs'] = 1
-    config['num_envs_eval'] = args.n_evals
+    config['num_envs_eval'] = 1
 
     n_epochs = args.epochs
 
@@ -78,6 +79,7 @@ if __name__ == "__main__":
 
     # Env config
     config['IDM'] = bool(args.IDM)
+    config['GIF'] = bool(args.GIF)
 
     env_config = _config.EnvironmentConfig(
         controlled_object=_config.ObjectType.SDC,
@@ -100,8 +102,6 @@ if __name__ == "__main__":
 
     # with jax.disable_jit(): # DEBUG
     evaluation_dict = evaluation.train()
-    
+
     with open(os.path.join(load_folder, expe_num, f"eval_metrics_{n_epochs}_IDM_{config['IDM']}.pkl"), "wb") as pkl_file:
         pickle.dump(evaluation_dict['metrics'], pkl_file)
-
-    
