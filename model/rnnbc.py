@@ -169,6 +169,11 @@ class make_train:
 
         init_rnn_state_eval = ScannedRNN.initialize_carry((self.config["num_envs_eval"], feature_extractor_shape))
 
+        def gaussian_entropy(std):
+            entropy = 0.5 * jnp.log( 2 * jnp.pi * jnp.e * std**2)
+            entropy = entropy.sum(axis=(-2), keepdims=True)
+            return entropy
+
         # Jitted functions
 
         jit_postprocess_fn = jax.jit(self._post_process)
@@ -265,9 +270,10 @@ class make_train:
             # BACKPROPAGATION ON THE SCENARIO
             def _loss_fn(params, init_rnn_state, log_traj_batch, traj_batch):
                 # Compute the rnn_state from the log on the first steps
-                rnn_state, _, _ = network.apply(params, init_rnn_state, (log_traj_batch.obs, log_traj_batch.done))
+                rnn_state, _, _, _, _, _ = network.apply(params, init_rnn_state, (log_traj_batch.obs, log_traj_batch.done))
                 # Compute the action for the rest of the trajectory
-                _, action_dist, _ = network.apply(params, rnn_state, (traj_batch.obs, traj_batch.done))
+                _, action_dist, _, weights, _, actor_std = network.apply(params, rnn_state, (traj_batch.obs, traj_batch.done))
+                entropy = - jnp.sum( weights * gaussian_entropy(actor_std))
 
                 if self.config['loss'] == 'logprob':
                     log_prob = action_dist.log_prob(traj_batch.expert_action.action.data)
@@ -281,22 +287,23 @@ class make_train:
                 else:
                     raise ValueError('Unknown loss')
 
-                return total_loss
+                return total_loss, entropy
 
-            grad_fn = jax.value_and_grad(_loss_fn, has_aux=False)
-            loss, grads = grad_fn(train_state.params, init_rnn_state_train, log_traj_batch, traj_batch)
-            return loss, grads
+            grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
+            (loss, entropy), grads = grad_fn(train_state.params, init_rnn_state_train, log_traj_batch, traj_batch)
+            return loss, entropy, grads
 
         pmap_funct = jax.pmap(_single_update)
 
         # Aggregate losses, grads and update
-        def _global_update(train_state, losses, grads):
+        def _global_update(train_state, losses, entropies, grads):
             mean_grads = jax.tree_map(lambda x: x.mean(0), grads)
             mean_loss = jax.tree_map(lambda x: x.mean(0), losses)
+            mean_entropy = jax.tree_map(lambda x: x.mean(0), entropies)
 
             train_state = train_state.apply_gradients(grads=mean_grads)
 
-            return train_state, mean_loss
+            return train_state, mean_loss, mean_entropy
 
         jit_global_update = jax.jit(_global_update)
 
@@ -312,7 +319,7 @@ class make_train:
                                                                 rng_extract[None].repeat(self.env.config.init_steps - 1, axis=0),
                                                                 self.env.config.init_steps - 1)
 
-            rnn_state, _, _ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
+            rnn_state, _, _, _, _, _ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
 
             def extand(x):
                 if isinstance(x, jnp.ndarray):
@@ -338,7 +345,7 @@ class make_train:
                 # rng, rng_extract = jax.random.split(rng)
                 obsv = self.extractor(current_state, obs, rng_extract)
 
-                rnn_state, action_dist, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
+                rnn_state, action_dist, _, _, _, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                 rng, rng_sample = jax.random.split(rng)
                 action_data = action_dist.sample(seed=rng_sample).squeeze(0)
                 action = datatypes.Action(data=action_data,
@@ -380,13 +387,15 @@ class make_train:
                 rng_pmap = jax.random.split(rng, self.n_minibatch)
                 expanded_train_state = jax.tree_map(lambda x: jnp.repeat(jnp.expand_dims(x, axis=0), self.n_minibatch, axis=0), train_state)
 
-                loss, grads = pmap_funct(expanded_train_state, minibatched_data, rng_pmap)
-                train_state_new, mean_loss = jit_global_update(train_state, loss, grads)
+                loss, entropy, grads = pmap_funct(expanded_train_state, minibatched_data, rng_pmap)
+                train_state_new, mean_loss, mean_entropy = jit_global_update(train_state, loss, entropy, grads)
 
-                return train_state_new, mean_loss
+                return train_state_new, mean_loss, mean_entropy
 
-            metric = {'loss': []}
+            metric = {'loss': [],
+                      'entropy': []}
             losses = []
+            entropies = []
 
             tt = 0
             for data in tqdm(self.train_dataset.as_numpy_iterator(), desc='Training', total=N_TRAINING // self.config['num_envs']):
@@ -395,13 +404,15 @@ class make_train:
             #     data = self.data
 
                 rng, rng_train = jax.random.split(rng)
-                train_state, loss = _update_scenario(train_state, data, rng_train)
+                train_state, loss, entropy = _update_scenario(train_state, data, rng_train)
                 losses.append(loss)
+                entropies.append(entropy)
 
                 if tt > (N_TRAINING * self.config['num_files'] / N_FILES) // self.config['num_envs']:
                     break
 
             metric['loss'].append(jnp.array(losses).mean())
+            metric['entropy'].append(jnp.array(entropies).mean())
 
             return train_state, metric
 
@@ -458,7 +469,9 @@ class make_train:
             train_state, train_metric = _update_epoch(train_state, rng_train)
             metrics[epoch]['train'] = train_metric
 
-            train_message = f"Epoch | {epoch} | Train | loss | {jnp.array(train_metric['loss']).mean():.4f}"
+            train_message = f"Epoch | {epoch} | Train "
+            train_message += f"| loss | {jnp.array(train_metric['loss']).mean():.4f} "
+            train_message += f"| entropy | {jnp.array(train_metric['entropy']).mean():.4f}"
             print(train_message)
 
             # Validation

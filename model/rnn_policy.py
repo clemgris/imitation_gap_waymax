@@ -45,6 +45,7 @@ class ActorCriticRNN(nn.Module):
     action_maximum: jnp.ndarray
     feature_extractor_class: nn.Module
     feature_extractor_kwargs: Optional[Union[Dict, None]]
+    num_components: int=6
 
     @nn.compact
     def __call__(self, rnn_state, x):
@@ -64,21 +65,32 @@ class ActorCriticRNN(nn.Module):
         x_actor = jax.nn.relu(x_actor)
         x_actor = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x_actor)
 
-        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
-        actor_mean = jax.nn.relu(actor_mean)
-        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_mean)
+        weights = nn.Dense(self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        weights = jax.nn.relu(weights)
+        weights = nn.Dense(self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(weights)
+        weights = jax.nn.softmax(weights)
+        weights = weights.reshape((*weights.shape[:2], 1, self.num_components))
 
-        actor_std = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        actor_mean = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        actor_mean = jax.nn.relu(actor_mean)
+        actor_mean = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_mean)
+        actor_mean = actor_mean.reshape((*actor_mean.shape[:2], self.action_dim, self.num_components))
+
+        actor_std = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
         actor_std = jax.nn.relu(actor_std)
-        actor_std = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_std)
+        actor_std = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_std)
         actor_std = nn.softplus(actor_std)
+        actor_std = actor_std.reshape((*actor_std.shape[:2], self.action_dim, self.num_components))
 
         # pi = distrax.Categorical(logits=actor_mean) # DISCRET ACTION SPACE
-        pi = tfd.Normal(loc=actor_mean, scale=actor_std) # CONTINUOUS ACTION SPACE
+        pi = tfd.MixtureSameFamily( # CONTINUOUS ACTION SPACE
+                mixture_distribution=tfd.Categorical(probs=weights),
+                components_distribution=tfd.Normal(loc=actor_mean, scale=actor_std))
+        # pi = tfd.Normal(loc=actor_mean, scale=actor_std)
 
         # # Critic
         # x_critic = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(x_cat)
         # x_critic = jax.nn.relu(x_critic)
         # critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x_critic)
 
-        return new_rnn_state, pi, None #jnp.squeeze(critic, axis=-1)
+        return new_rnn_state, pi, None, weights, actor_mean, actor_std #jnp.squeeze(critic, axis=-1)

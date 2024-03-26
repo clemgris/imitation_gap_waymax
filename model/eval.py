@@ -210,7 +210,7 @@ class make_eval:
                                                                 (scenario, rng),
                                                                 rng_extract[None].repeat(self.env.config.init_steps - 1, axis=0),
                                                                 self.env.config.init_steps - 1)
-            rnn_state, _, _ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
+            rnn_state, _, _, _, _ ,_ = network.apply(train_state.params, init_rnn_state_eval, (log_traj_batch.obs, log_traj_batch.done))
 
             def extand(x):
                 if isinstance(x, jnp.ndarray):
@@ -238,7 +238,7 @@ class make_eval:
                 obsv = self.extractor(current_state, obs, rng_extract)
 
                 # Sample action and update scenario
-                rnn_state, action_dist, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
+                rnn_state, action_dist, _, _, _, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                 rng, rng_sample = jax.random.split(rng)
                 action_data = action_dist.sample(seed=rng_sample).squeeze(0)
                 action = datatypes.Action(data=action_data,
@@ -303,7 +303,7 @@ class make_eval:
 
 
                 # Sample action and update scenario
-                rnn_state, action_dist, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
+                rnn_state, action_dist, _, _, _, _ = network.apply(train_state.params, rnn_state, (jax.tree_map(extand, obsv), done[jnp.newaxis, ...]))
                 rng, rng_sample = jax.random.split(rng)
                 action_data = action_dist.sample(seed=rng_sample).squeeze(0)
                 action = datatypes.Action(data=action_data,
@@ -383,7 +383,7 @@ class make_eval:
                         imgs, scenario_metrics = _eval_scenario(train_state, scenario, rng_eval)
 
                         frames = [Image.fromarray(img) for img in imgs]
-                        frames[0].save(os.path.join('/data/draco/cleain/imitation_gap_waymax/animation/', self.config['log_folder'][5:], f'ex_{t}.gif'),
+                        frames[0].save(os.path.join('/data/tucana/cleain/imitation_gap_waymax/animation/', self.config['log_folder'][5:], f'ex_{t}.gif'),
                                     save_all=True,
                                     append_images=frames[1:],
                                     duration=100,
@@ -427,7 +427,7 @@ class make_eval:
                         all_metrics_inter[key].append(jnp.any(value.value[value.valid & has_inter]))
 
                     if self.config['GIF']:
-                        folder = os.path.join(os.path.join(f'/data/draco/cleain/imitation_gap_waymax/animation/', self.config['log_folder'][5:], f'ex_{t}.json'))
+                        folder = os.path.join(os.path.join(f'/data/tucana/cleain/imitation_gap_waymax/animation/', self.config['log_folder'][5:], f'ex_{t}.json'))
                         with open(folder, 'w') as json_file:
                             json.dump(jax.tree_map(lambda x : x.item(), all_scenario_metrics), json_file, indent=4)
 
