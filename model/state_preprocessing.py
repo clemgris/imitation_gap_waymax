@@ -29,6 +29,24 @@ def extract_xy(state, obs, rng):
     output = jnp.concatenate((xy, valid), axis=-1)
     return output
 
+def extract_xyyaw(state, obs, rng):
+    """Extract the xy positions and yaw of the object of the scene.
+
+    Args:
+        state: The current simulator state (unused).
+        obs: The current observation of the SDC in its local
+        referential.
+
+    Returns:
+        xy positions (trajectory of size 1) of the
+        objects in the scene concatenated with validity tag.
+    """
+    xy = obs.trajectory.xy / XY_SCALING_FACTOR
+    yaw = obs.trajectory.yaw[..., None]
+    valid = obs.trajectory.valid[..., None]
+    output = jnp.concatenate((xy, yaw, valid), axis=-1)
+    return output
+
 def extract_sdc_speed(state, obs, rng):
     """Extract the speed of the SDC.
 
@@ -246,6 +264,7 @@ def extract_trafficlights(state, obs, rng):
     return traffic_lights_features
 
 EXTRACTOR_DICT = {'xy': extract_xy,
+                  'xyyaw': extract_xyyaw,
                   'sdc_speed': extract_sdc_speed,
                   'proxy_goal': extract_goal,
                   'noisy_proxy_goal': extract_noisy_goal,
@@ -255,6 +274,7 @@ EXTRACTOR_DICT = {'xy': extract_xy,
 
 def init_dict(config, batch_size):
     return {'xy': jnp.zeros((1, batch_size, config['max_num_obj'], 3)),
+            'xyyaw': jnp.zeros((1, batch_size, config['max_num_obj'], 4)),
             'sdc_speed': jnp.zeros((1, batch_size, 1)),
             'proxy_goal': jnp.zeros((1, batch_size, 2)),
             'noisy_proxy_goal': jnp.zeros((1, batch_size, 2)),

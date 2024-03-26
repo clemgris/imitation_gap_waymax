@@ -133,6 +133,7 @@ class MlpEncoder(nn.Module):
         return output
 
 FEATURES_EXTRACTOR_DICT = {'xy': MlpEncoder,
+                           'xyyaw': MlpEncoder,
                            'sdc_speed': MlpEncoder,
                            'proxy_goal': MlpEncoder,
                            'noisy_proxy_goal': MlpEncoder,
