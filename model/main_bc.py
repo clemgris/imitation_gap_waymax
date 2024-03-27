@@ -96,7 +96,7 @@ config = {
     'shuffle_seed': 123,
     'shuffle_buffer_size': 1000, # 1000
     'total_timesteps': 100,
-    'num_files': 500,
+    'num_files': 200,
     'training_path': '/data/tucana/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
     'validation_path': '/data/tucana/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
     'should_cache': True
