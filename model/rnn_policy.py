@@ -76,10 +76,13 @@ class ActorCriticRNN(nn.Module):
         actor_mean = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_mean)
         actor_mean = actor_mean.reshape((*actor_mean.shape[:2], self.action_dim, self.num_components))
 
-        actor_std = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
-        actor_std = jax.nn.relu(actor_std)
-        actor_std = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_std)
-        actor_std = nn.softplus(actor_std)
+        actor_log_std = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(x_actor)
+        actor_log_std = jax.nn.relu(actor_log_std)
+        actor_log_std = nn.Dense(self.action_dim * self.num_components, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_log_std)
+        # actor_std = nn.softplus(actor_std)
+
+        actor_log_std = jnp.clip(actor_log_std, a_min=-5, a_max=2)
+        actor_std = jnp.exp(actor_log_std)
         actor_std = actor_std.reshape((*actor_std.shape[:2], self.action_dim, self.num_components))
 
         # pi = distrax.Categorical(logits=actor_mean) # DISCRET ACTION SPACE
