@@ -9,9 +9,11 @@ from waymax import config as _config
 from waymax import dataloader
 from rnnbc import make_train
 
-from utils.dataloader import tf_examples_dataset
+from dataset.config import N_TRAINING_INTER, N_TRAINING
+from utils.dataloader import tf_examples_dataset, inter_filter_funct, speed_filter_funct
 # Desable preallocation for jax and tensorflow
 import os
+print(jax.devices())
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
 
@@ -35,12 +37,14 @@ config = {
     'feature_extractor': 'KeyExtractor',
     'feature_extractor_kwargs': {'final_hidden_layers': 128,
                                  'hidden_layers': {
-                                     'xy': 128,
+                                    #  'xy': 128,
+                                     'xyyaw': 128,
                                      'sdc_speed': 32,
                                      'heading': 32,
                                      'roadgraph_map': 128},
                                  'keys': [
-                                    'xy',
+                                    # 'xy',
+                                    'xyyaw',
                                     'sdc_speed',
                                     # 'proxy_goal',
                                     # 'noisy_proxy_goal',
@@ -54,6 +58,8 @@ config = {
                                  },
     'freq_eval': 10,
     'freq_save': 10,
+    'filter_fun_name': 'inter_filter_fun',
+    'filter_fun_args': {},
     'include_sdc_paths': False,
     'key': 42,
     'loss': 'mse',
@@ -90,10 +96,9 @@ config = {
     'shuffle_seed': 123,
     'shuffle_buffer_size': 1000, # 1000
     'total_timesteps': 100,
-    'min_mean_speed': None,
-    'num_files': 100, #500,
-    'training_path': '/data/draco/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
-    'validation_path': '/data/draco/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
+    'num_files': 500,
+    'training_path': '/data/tucana/shared/WOD_1_1_0/tf_example/training/training_tfexample.tfrecord@1000',
+    'validation_path': '/data/tucana/shared/WOD_1_1_0/tf_example/validation/validation_tfexample.tfrecord@150',
     'should_cache': True
     }
 
@@ -151,6 +156,9 @@ WOD_1_1_0_VALIDATION = _config.DatasetConfig(
     repeat=1
 )
 
+filter_functions = {'inter_filter_fun': inter_filter_funct,
+                    'speed_filter_fun': speed_filter_funct}
+
 # Training dataset
 train_dataset = tf_examples_dataset(
     path=WOD_1_1_0_TRAINING.path,
@@ -165,10 +173,18 @@ train_dataset = tf_examples_dataset(
     drop_remainder=WOD_1_1_0_TRAINING.drop_remainder,
     tf_data_service_address=WOD_1_1_0_TRAINING.tf_data_service_address,
     batch_by_scenario=WOD_1_1_0_TRAINING.batch_by_scenario,
-    filter_function=None,
+    filter_function=functools.partial(filter_functions[config['filter_fun_name']], **config['filter_fun_args']),
     num_files = config['num_files'],
     should_cache = config['should_cache']
 )
+
+if config['filter_fun_name']:
+    if config['filter_fun_name'] == 'inter_filter_fun':
+        config['num_training_data'] = N_TRAINING_INTER
+    else:
+        raise ValueError('Number of training data satisfying the filtering condition is unknown')
+else:
+    config['num_training_data'] = N_TRAINING
 
 data = train_dataset.as_numpy_iterator().next() # DEBUG
 
@@ -197,6 +213,7 @@ env_config = _config.EnvironmentConfig(
 ##
 # TRAINING
 ##
+print(jax.devices())
 training = make_train(config,
                     env_config,
                     train_dataset,

@@ -408,7 +408,7 @@ class make_train:
                 losses.append(loss)
                 entropies.append(entropy)
 
-                if tt > (N_TRAINING * self.config['num_files'] / N_FILES) // self.config['num_envs']:
+                if tt > (self.config['num_training_data'] * self.config['num_files'] / N_FILES) // self.config['num_envs']:
                     break
 
             metric['loss'].append(jnp.array(losses).mean())

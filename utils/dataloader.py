@@ -22,6 +22,7 @@ import functools
 import math
 import os
 import random
+import jax.numpy as jnp
 from typing import Callable, Iterator, Optional, Sequence, TypeVar
 
 import jax
@@ -179,9 +180,20 @@ def tf_examples_dataset(
     )
   return dataset.prefetch(AUTOTUNE)
 
+def inter_filter_funct(data: Callable[[dict[str, tf.Tensor]], bool]):
+    is_sdc = data['state/is_sdc']
 
-def filter_funct(data: Callable[[dict[str, tf.Tensor]], bool], 
-                 min_mean_speed=2):
+    has_sdc = tf.reduce_any(is_sdc > 0)
+
+    if has_sdc:
+        interact_condition = tf.math.reduce_any(data['state/objects_of_interest'] == 1)
+        
+        return interact_condition
+    else:
+        return False
+
+def speed_filter_funct(data: Callable[[dict[str, tf.Tensor]], bool],
+                       min_mean_speed=2):
     is_sdc = data['state/is_sdc']
 
     has_sdc = tf.reduce_any(is_sdc > 0)
