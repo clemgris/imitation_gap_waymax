@@ -9,7 +9,7 @@ from model.model_utils import linear_clip_scale
 from model.config import MASK_UNVALID_VALUE
 
 class ObsMask(ABC):
-    
+
     @abstractmethod
     def mask_obs(self, *args: Any, **kwds: Any) -> Any:
         pass
@@ -25,26 +25,20 @@ class ObsMask(ABC):
 @dataclass
 class DistanceObsMask(ObsMask):
     radius: float
-    
+
     def mask_obs(self, state, obs, rng):
         x = obs.trajectory.x
         y = obs.trajectory.y
-        yaw = obs.trajectory.yaw
-        
+
         visible_obj = self.mask_fun(x, y)
-        
-        masked_trajectory = dataclasses.replace(obs.trajectory,
-                                            x=jnp.where(visible_obj, x, MASK_UNVALID_VALUE * jnp.ones_like(x)),
-                                            y=jnp.where(visible_obj, y, MASK_UNVALID_VALUE * jnp.ones_like(y)),
-                                            yaw=jnp.where(visible_obj, yaw, - jnp.ones_like(yaw)))
-        
-        trajectory_limited = dataclasses.replace(masked_trajectory,
+
+        trajectory_limited = dataclasses.replace(obs.trajectory,
                                                  valid=visible_obj)
-        
+
         limited_obs = dataclasses.replace(obs,
                                           trajectory=trajectory_limited)
         return limited_obs
-                 
+
     def mask_fun(self, obj_x, obj_y, eps=1e-3):
         is_center = (-eps <= obj_x) & (obj_x <= eps) & \
             (-eps <= obj_y) & (obj_y <= eps)
@@ -52,7 +46,7 @@ class DistanceObsMask(ObsMask):
         squared_distance = obj_x**2 + obj_y**2
 
         return (squared_distance <= self.radius**2) | is_center
-    
+
     def plot_mask_fun(self, ax, center=(0, 0)) -> None:
         theta = jnp.linspace(0, 2 * jnp.pi, 100)
 
@@ -65,22 +59,16 @@ class DistanceObsMask(ObsMask):
 class ConicObsMask(ObsMask):
     radius: float
     angle: float
-    
+
     def mask_obs(self, state, obs, rng):
         x = obs.trajectory.x
         y = obs.trajectory.y
-        yaw = obs.trajectory.yaw
-        
+
         visible_obj = self.mask_fun(x, y)
-        
-        masked_trajectory = dataclasses.replace(obs.trajectory,
-                                            x=jnp.where(visible_obj, x, MASK_UNVALID_VALUE * jnp.ones_like(x)),
-                                            y=jnp.where(visible_obj, y, MASK_UNVALID_VALUE * jnp.ones_like(y)),
-                                            yaw=jnp.where(visible_obj, yaw, - jnp.ones_like(yaw)))
-        
-        trajectory_limited = dataclasses.replace(masked_trajectory,
+
+        trajectory_limited = dataclasses.replace(obs.trajectory,
                                                  valid=visible_obj)
-        
+
         limited_obs = dataclasses.replace(obs,
                                           trajectory=trajectory_limited)
         return limited_obs
@@ -94,11 +82,11 @@ class ConicObsMask(ObsMask):
         obj_angle = jnp.arctan2(obj_y, obj_x)
         angle_condition = (- self.angle[:, None, None, None] / 2 <= obj_angle) &\
             (obj_angle <= self.angle[:, None, None, None] / 2)
-            
+
         radius_condition = squared_distance <= self.radius**2
 
         return (angle_condition & radius_condition)| is_center
-    
+
     def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
         theta = jnp.linspace(- self.angle/2, self.angle/2, 100)
 
@@ -120,23 +108,17 @@ class ConicObsMask(ObsMask):
 class BlindSpotObsMask(ObsMask):
     radius: float
     angle: float
-    
+
     def mask_obs(self, state, obs, rng):
-        
+
         x = obs.trajectory.x
         y = obs.trajectory.y
-        yaw = obs.trajectory.yaw
-        
+
         visible_obj = self.mask_fun(x, y)
-        
-        masked_trajectory = dataclasses.replace(obs.trajectory,
-                                            x=jnp.where(visible_obj, x, MASK_UNVALID_VALUE * jnp.ones_like(x)),
-                                            y=jnp.where(visible_obj, y, MASK_UNVALID_VALUE * jnp.ones_like(y)),
-                                            yaw=jnp.where(visible_obj, yaw, - jnp.ones_like(yaw)))
-        
-        trajectory_limited = dataclasses.replace(masked_trajectory,
+
+        trajectory_limited = dataclasses.replace(obs.trajectory,
                                                  valid=visible_obj)
-        
+
         limited_obs = dataclasses.replace(obs,
                                           trajectory=trajectory_limited)
         return limited_obs
@@ -145,7 +127,7 @@ class BlindSpotObsMask(ObsMask):
         assert(self.angle <= jnp.pi / 2)
         is_center = (-eps <= obj_x) & (obj_x <= eps) & \
             (-eps <= obj_y) & (obj_y <= eps)
-        
+
         visible_angle = jnp.pi - 2 * self.angle
         squared_distance = obj_x**2 + obj_y**2
 
@@ -155,9 +137,9 @@ class BlindSpotObsMask(ObsMask):
         radius_condition = squared_distance <= self.radius**2
 
         return ((angle_condition_front | angle_condition_back) & radius_condition) | is_center
-    
+
     def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
-        
+
         # Front
         theta = jnp.linspace(- jnp.pi / 2, jnp.pi / 2, 100)
 
@@ -197,50 +179,44 @@ class SpeedConicObsMask(ObsMask):
     angle_max: float
     angle_min: float
     v_max: float
-    
+
     def mask_obs(self, state, obs, rng):
         _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
         sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
 
         x = obs.trajectory.x
         y = obs.trajectory.y
-        yaw = obs.trajectory.yaw
-        
-        visible_obj = self.mask_fun(obs.trajectory.x,
-                                    obs.trajectory.y,
-                                    sdc_v.squeeze())
-        
-        masked_trajectory = dataclasses.replace(obs.trajectory,
-                                                 x=jnp.where(visible_obj, x, MASK_UNVALID_VALUE * jnp.ones_like(x)),
-                                                 y=jnp.where(visible_obj, y, MASK_UNVALID_VALUE * jnp.ones_like(y)),
-                                                 yaw=jnp.where(visible_obj, yaw, - jnp.ones_like(yaw)))
 
-        trajectory_limited = dataclasses.replace(masked_trajectory,
+        visible_obj = self.mask_fun(x,
+                                    y,
+                                    sdc_v.squeeze())
+
+        trajectory_limited = dataclasses.replace(obs.trajectory,
                                                  valid=visible_obj)
         limited_obs = dataclasses.replace(obs,
                                           trajectory=trajectory_limited)
         return limited_obs
 
     def mask_fun(self, obj_x, obj_y, sdc_v, eps=1e-3):
-        
+
         angle = (sdc_v.clip(0, self.v_max) * (self.angle_min - self.angle_max) / self.v_max + self.angle_max)[..., None]
 
         return ConicObsMask(self.radius, angle).mask_fun(obj_x, obj_y, eps=eps)
-    
+
     def plot_mask_fun(self, ax, sdc_v, center=(0, 0), color='b') -> None:
         angle = sdc_v.clip(0, self.v_max) * (self.angle_min - self.angle_max) / self.v_max + self.angle_max
 
         ConicObsMask(self.radius, angle).plot_mask_fun(ax, center=center, color=color)
-        
+
 @dataclass
 class SpeedGaussianNoise(ObsMask):
     v_max: float
     sigma_max: float
     sigma_min: float
-    
+
     def mask_obs(self, state, obs, rng):
         noisy_xy = self.mask_fun(state, obs, rng)
-        
+
         trajectory_limited = dataclasses.replace(obs.trajectory,
                                                  x=noisy_xy[..., 0],
                                                  y=noisy_xy[..., 1])
@@ -249,9 +225,9 @@ class SpeedGaussianNoise(ObsMask):
         return obs_limited
 
     def mask_fun(self, state, obs, rng):
-        
+
         xy = obs.trajectory.xy
-        
+
         _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
         sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
 
@@ -260,25 +236,25 @@ class SpeedGaussianNoise(ObsMask):
         sigma = jnp.where(is_obj[:, None, ..., None, None],
                           linear_clip_scale(sdc_v, self.v_max, self.sigma_min, self.sigma_max)[..., None] * jnp.ones_like(xy),
                           jnp.zeros_like(xy))
-        
+
         gaussian_noise = jax.random.normal(rng, xy.shape) * sigma
-        
+
         noisy_xy = xy + gaussian_noise
 
         return noisy_xy
-    
+
     def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
         pass
-    
+
 @dataclass
 class SpeedUniformNoise(ObsMask):
     v_max: float
     bound_max: float
     bound_min: float
-    
+
     def mask_obs(self, state, obs, rng):
         noisy_xy = self.mask_fun(state, obs, rng)
-        
+
         trajectory_limited = dataclasses.replace(obs.trajectory,
                                                  x=noisy_xy[..., 0],
                                                  y=noisy_xy[..., 1])
@@ -287,7 +263,7 @@ class SpeedUniformNoise(ObsMask):
         return obs_limited
 
     def mask_fun(self, state, obs, rng):
-        
+
         _, sdc_idx = jax.lax.top_k(state.object_metadata.is_sdc, k=1)
         sdc_v = jnp.take_along_axis(obs.trajectory.speed, sdc_idx[..., None, None], axis=-2)
 
@@ -296,26 +272,26 @@ class SpeedUniformNoise(ObsMask):
         bound = jnp.where(is_obj[:, None, ..., None, None],
                           linear_clip_scale(sdc_v, self.v_max, self.bound_min, self.bound_max)[..., None] * jnp.ones_like(xy),
                           jnp.zeros_like(xy))
-        
-        uniform_noise = jax.random.uniform(rng, 
-                                          minval=-bound, 
-                                          maxval=bound, 
+
+        uniform_noise = jax.random.uniform(rng,
+                                          minval=-bound,
+                                          maxval=bound,
                                           shape=xy.shape)
-        
+
         noisy_xy = xy + uniform_noise
 
         return noisy_xy
-    
+
     def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
         pass
-    
-    
+
+
 @dataclass
 class ZeroMask(ObsMask):
-    
+
     def mask_obs(self, state, obs, rng):
         zero_xy = self.mask_fun(state, obs, rng)
-        
+
         trajectory_limited = dataclasses.replace(obs.trajectory,
                                                  x=zero_xy[..., 0],
                                                  y=zero_xy[..., 1])
@@ -324,10 +300,10 @@ class ZeroMask(ObsMask):
         return obs_limited
 
     def mask_fun(self, state, obs, rng):
-        
+
         xy = obs.trajectory.xy
 
         return jnp.zeros_like(xy)
-    
+
     def plot_mask_fun(self, ax, center=(0, 0), color='b') -> None:
         pass

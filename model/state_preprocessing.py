@@ -26,7 +26,9 @@ def extract_xy(state, obs, rng):
     xy = obs.trajectory.xy / XY_SCALING_FACTOR
     valid = obs.trajectory.valid[..., None]
 
-    output = jnp.concatenate((xy, valid), axis=-1)
+    masked_xy = jnp.where(valid, xy, jnp.zeros_like(xy))
+
+    output = jnp.concatenate((masked_xy, valid), axis=-1)
     return output
 
 def extract_xyyaw(state, obs, rng):
@@ -44,7 +46,11 @@ def extract_xyyaw(state, obs, rng):
     xy = obs.trajectory.xy / XY_SCALING_FACTOR
     yaw = obs.trajectory.yaw[..., None]
     valid = obs.trajectory.valid[..., None]
-    output = jnp.concatenate((xy, yaw, valid), axis=-1)
+
+    masked_xy = jnp.where(valid, xy, jnp.zeros_like(xy))
+    masked_yaw = jnp.where(valid, yaw, jnp.zeros_like(yaw))
+
+    output = jnp.concatenate((masked_xy, masked_yaw, valid), axis=-1)
     return output
 
 def extract_sdc_speed(state, obs, rng):
@@ -228,18 +234,20 @@ def extract_roadgraph(state, obs, rng):
     Returns:
         Masked roadgraph points features (trajectory of size 1).
     """
-    valid_roadmap_point = obs.roadgraph_static_points.valid[..., None]
+    valid = obs.roadgraph_static_points.valid[..., None]
 
-    roadmap_point = obs.roadgraph_static_points.xy / XY_SCALING_FACTOR
+    xy = obs.roadgraph_static_points.xy / XY_SCALING_FACTOR
+    masked_xy = jnp.where(valid, xy, jnp.zeros_like(xy))
 
-    roadmap_dir = obs.roadgraph_static_points.dir_xy / XY_SCALING_FACTOR
+    dir = obs.roadgraph_static_points.dir_xy / XY_SCALING_FACTOR
+    masked_dir = jnp.where(valid, dir, jnp.zeros_like(dir))
 
-    roadmap_type = obs.roadgraph_static_points.types
-    roadmap_type_one_hot = jax.nn.one_hot(roadmap_type, 20)
+    type = obs.roadgraph_static_points.types
+    type_one_hot = jax.nn.one_hot(type, 20)
 
-    roadmap_point_features = jnp.concatenate((roadmap_point, roadmap_dir, roadmap_type_one_hot, valid_roadmap_point), axis=-1)
+    point_features = jnp.concatenate((masked_xy, masked_dir, type_one_hot, valid), axis=-1)
 
-    return roadmap_point_features
+    return point_features
 
 def extract_trafficlights(state, obs, rng):
     """Extract the features (xy positions, type) of the traffic
@@ -253,13 +261,15 @@ def extract_trafficlights(state, obs, rng):
     Returns:
         Masked traffic lights features (trajectory of size 1).
     """
-    traffic_lights = obs.traffic_lights.xy / XY_SCALING_FACTOR
+    xy = obs.traffic_lights.xy / XY_SCALING_FACTOR
     valid = obs.traffic_lights.valid[..., None]
 
-    traffic_lights_type = obs.traffic_lights.state
-    traffic_lights_type_one_hot = jax.nn.one_hot(traffic_lights_type, 9)
+    masked_xy = jnp.where(valid, xy, jnp.zeros_like(xy))
 
-    traffic_lights_features = jnp.concatenate((traffic_lights, traffic_lights_type_one_hot, valid), axis=-1)
+    type = obs.traffic_lights.state
+    type_one_hot = jax.nn.one_hot(type, 9)
+
+    traffic_lights_features = jnp.concatenate((masked_xy, type_one_hot, valid), axis=-1)
 
     return traffic_lights_features
 
