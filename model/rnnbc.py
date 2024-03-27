@@ -135,6 +135,11 @@ class make_train:
         frac = jnp.where(n_epoch <= 20, 1, 1 / (2**(n_epoch - 20)))
         return self.config["lr"] * frac
 
+    def cosine_annealing_lr(self, count, max_lr, min_lr, T_max):
+        cosine_decay = 0.5 * (1 + jnp.cos(jnp.pi * self, count / T_max))
+        lr = min_lr + 0.5 * (max_lr - min_lr) * cosine_decay
+        return lr
+
     def train(self,):
 
         # INIT NETWORK
@@ -273,7 +278,7 @@ class make_train:
                 rnn_state, _, _, _, _, _ = network.apply(params, init_rnn_state, (log_traj_batch.obs, log_traj_batch.done))
                 # Compute the action for the rest of the trajectory
                 _, action_dist, _, weights, _, actor_std = network.apply(params, rnn_state, (traj_batch.obs, traj_batch.done))
-                entropy = - jnp.sum( weights * gaussian_entropy(actor_std))
+                entropy = (weights * gaussian_entropy(actor_std)).sum(axis=-1).mean()
 
                 if self.config['loss'] == 'logprob':
                     log_prob = action_dist.log_prob(traj_batch.expert_action.action.data)
