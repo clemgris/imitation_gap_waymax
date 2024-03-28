@@ -134,6 +134,7 @@ class MlpEncoder(nn.Module):
 
 FEATURES_EXTRACTOR_DICT = {'xy': MlpEncoder,
                            'xyyaw': MlpEncoder,
+                           'xyyawv': MlpEncoder,
                            'sdc_speed': MlpEncoder,
                            'proxy_goal': MlpEncoder,
                            'noisy_proxy_goal': MlpEncoder,
