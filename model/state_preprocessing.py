@@ -12,7 +12,7 @@ from waymax.datatypes import transform_trajectory
 from utils.observation import last_sdc_observation_for_current_sdc_from_state
 
 def extract_xy(state, obs, rng):
-    """Extract the xy positions of the object of the scene.
+    """Extract the xy positions of the objects of the scene.
 
     Args:
         state: The current simulator state (unused).
@@ -32,7 +32,7 @@ def extract_xy(state, obs, rng):
     return output
 
 def extract_xyyaw(state, obs, rng):
-    """Extract the xy positions and yaw of the object of the scene.
+    """Extract the xy positions and yaw of the objects of the scene.
 
     Args:
         state: The current simulator state (unused).
@@ -51,6 +51,30 @@ def extract_xyyaw(state, obs, rng):
     masked_yaw = jnp.where(valid, yaw, jnp.zeros_like(yaw))
 
     output = jnp.concatenate((masked_xy, masked_yaw, valid), axis=-1)
+    return output
+
+def extract_xyyawv(state, obs, rng):
+    """Extract the xy positions, yaw and speed of the objects of the scene.
+
+    Args:
+        state: The current simulator state (unused).
+        obs: The current observation of the SDC in its local
+        referential.
+
+    Returns:
+        xy positions (trajectory of size 1) of the
+        objects in the scene concatenated with validity tag.
+    """
+    xy = obs.trajectory.xy / XY_SCALING_FACTOR
+    yaw = obs.trajectory.yaw[..., None]
+    speed = obs.trajectory.speed[..., None] / SPEED_SCALING_FACTOR
+    valid = obs.trajectory.valid[..., None]
+
+    masked_xy = jnp.where(valid, xy, jnp.zeros_like(xy))
+    masked_yaw = jnp.where(valid, yaw, jnp.zeros_like(yaw))
+    masked_speed = jnp.where(valid, speed, jnp.zeros_like(speed))
+
+    output = jnp.concatenate((masked_xy, masked_yaw, masked_speed, valid), axis=-1)
     return output
 
 def extract_sdc_speed(state, obs, rng):
@@ -275,6 +299,7 @@ def extract_trafficlights(state, obs, rng):
 
 EXTRACTOR_DICT = {'xy': extract_xy,
                   'xyyaw': extract_xyyaw,
+                  'xyyawv': extract_xyyawv,
                   'sdc_speed': extract_sdc_speed,
                   'proxy_goal': extract_goal,
                   'noisy_proxy_goal': extract_noisy_goal,
@@ -285,6 +310,7 @@ EXTRACTOR_DICT = {'xy': extract_xy,
 def init_dict(config, batch_size):
     return {'xy': jnp.zeros((1, batch_size, config['max_num_obj'], 3)),
             'xyyaw': jnp.zeros((1, batch_size, config['max_num_obj'], 4)),
+            'xyyawv': jnp.zeros((1, batch_size, config['max_num_obj'], 5)),
             'sdc_speed': jnp.zeros((1, batch_size, 1)),
             'proxy_goal': jnp.zeros((1, batch_size, 2)),
             'noisy_proxy_goal': jnp.zeros((1, batch_size, 2)),
